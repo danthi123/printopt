@@ -6,6 +6,7 @@ import asyncio
 import csv
 import io
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.request import urlopen
@@ -83,6 +84,56 @@ async def run_vibration_test(
     return f"resonances_{axis}"
 
 
+async def fetch_resonance_csv(client: MoonrakerClient, axis: str) -> str:
+    """Fetch the most recent resonances CSV for an axis from the printer.
+
+    Uses SSH to find and read the latest CSV file from /tmp/ on the printer,
+    since Moonraker does not serve files outside its managed directories.
+
+    Args:
+        client: Moonraker client (used for host address).
+        axis: "x" or "y".
+
+    Returns:
+        CSV text content, or empty string if not found.
+    """
+    axis = axis.lower()
+    host = client.host
+
+    # Find the latest resonances CSV for this axis
+    try:
+        result = subprocess.run(
+            ["ssh", f"root@{host}",
+             f"ls -t /tmp/resonances_{axis}_*.csv 2>/dev/null | head -1"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("SSH ls failed for %s axis: %s", axis, exc)
+        return ""
+
+    csv_path = result.stdout.strip()
+    if not csv_path:
+        logger.warning("No resonance CSV found for %s axis on %s", axis, host)
+        return ""
+
+    # Read the file content via SSH
+    try:
+        result = subprocess.run(
+            ["ssh", f"root@{host}", f"cat {csv_path}"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("SSH cat failed for %s: %s", csv_path, exc)
+        return ""
+
+    if result.returncode != 0:
+        logger.warning("Failed to read %s: %s", csv_path, result.stderr)
+        return ""
+
+    logger.info("Fetched %s (%d bytes)", csv_path, len(result.stdout))
+    return result.stdout
+
+
 async def fetch_accel_csv(
     client: MoonrakerClient,
     filename_prefix: str,
@@ -132,7 +183,7 @@ def parse_accel_csv(csv_text: str, axis: str = "x") -> AccelData:
     for row in reader:
         if not row:
             continue
-        if row[0].startswith("#"):
+        if row[0].startswith("#") or row[0].strip().startswith("freq"):
             header = [h.strip().lstrip("#") for h in row]
             continue
         try:

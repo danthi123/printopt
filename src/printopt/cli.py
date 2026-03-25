@@ -236,26 +236,82 @@ async def _dashboard_vibration_analyze(client: MoonrakerClient, mgr: PluginManag
         return
 
     try:
-        from printopt.plugins.vibration.capture import run_vibration_test
-        from printopt.plugins.vibration.analysis import compute_psd, find_resonance_peaks, evaluate_shapers
+        from printopt.plugins.vibration.capture import (
+            run_vibration_test,
+            fetch_resonance_csv,
+            parse_accel_csv,
+        )
+        from printopt.plugins.vibration.analysis import (
+            find_resonance_peaks,
+            evaluate_shapers,
+        )
+        import csv as csv_mod
+        import io
         import numpy as np
 
         for axis in ("x", "y"):
-            # Broadcast status update
             await broadcast_state({"vibration_status": f"Running {axis.upper()} axis test..."})
             logger.info("Running vibration test: %s axis", axis)
-
             await run_vibration_test(client, axis=axis)
-
-            # For now, use Klipper's built-in results
-            # Full implementation would parse /tmp/resonances_*.csv
             logger.info("Vibration test complete for %s axis", axis)
 
+            # Wait a moment for Klipper to write CSV
+            await asyncio.sleep(3)
+
+            # Fetch the CSV data from the printer
+            csv_text = await fetch_resonance_csv(client, axis)
+            if not csv_text:
+                logger.warning("No CSV data for %s axis, skipping analysis", axis)
+                continue
+
+            # Parse the PSD data directly from the CSV columns
+            reader = csv_mod.reader(io.StringIO(csv_text))
+            freqs_list: list[float] = []
+            psd_list: list[float] = []
+            for row in reader:
+                if not row:
+                    continue
+                if row[0].startswith("#") or row[0].strip().startswith("freq"):
+                    continue
+                try:
+                    freq = float(row[0])
+                    # Use psd_xyz column (index 4) if available, else psd_x
+                    psd_idx = 4 if len(row) > 4 else 1
+                    psd_val = float(row[psd_idx])
+                    freqs_list.append(freq)
+                    psd_list.append(psd_val)
+                except (ValueError, IndexError):
+                    continue
+
+            if not freqs_list:
+                logger.warning("Could not parse PSD data for %s axis", axis)
+                continue
+
+            freqs = np.array(freqs_list)
+            psd = np.array(psd_list)
+
+            # Find peaks and evaluate shapers
+            peaks = find_resonance_peaks(freqs, psd)
+            shapers = evaluate_shapers(freqs, psd)
+
+            # Store results in the plugin
+            vib_plugin.store_results(axis, peaks, shapers, freqs.tolist(), psd.tolist())
+
+            best = shapers[0] if shapers else None
+            logger.info(
+                "%s axis: %d peaks found, best shaper: %s @ %.1f Hz",
+                axis.upper(), len(peaks),
+                best.shaper_type if best else "none",
+                best.frequency if best else 0,
+            )
+
         await broadcast_state({"vibration_status": "Analysis complete"})
-        logger.info("Vibration analysis complete from dashboard")
+        logger.info("Vibration analysis complete")
 
     except Exception as e:
         logger.error("Dashboard vibration analysis error: %s", e)
+        import traceback
+        traceback.print_exc()
         await broadcast_state({"vibration_status": f"Error: {e}"})
 
 
