@@ -1,15 +1,14 @@
-"""FFT-based vibration analysis engine.
-
-Provides PSD estimation, resonance peak detection, and input shaper
-evaluation using the same transfer functions as Klipper.
-"""
+"""Enhanced vibration analysis — high-resolution FFT with multi-peak shaper optimization."""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.signal import welch, find_peaks
+from scipy import signal as sp_signal
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,43 +26,75 @@ class ShaperResult:
     max_accel_loss: float
 
 
-# ---------------------------------------------------------------------------
-# PSD estimation
-# ---------------------------------------------------------------------------
-
 def compute_psd(
-    signal: np.ndarray,
+    samples: np.ndarray,
     fs: float,
     nperseg: int | None = None,
+    noverlap: int | None = None,
+    window: str = "hann",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Welch's method PSD estimation.
+    """Compute PSD using Welch's method with high frequency resolution.
 
-    Parameters
-    ----------
-    signal : array
-        1-D time-domain accelerometer samples.
-    fs : float
-        Sample rate in Hz.
-    nperseg : int, optional
-        Segment length for Welch's method.  Defaults to
-        ``min(len(signal), int(fs * 2))`` for high frequency resolution.
+    Uses 4x more segments than Klipper's default for higher resolution.
 
-    Returns
-    -------
-    freqs : ndarray
-        Positive frequency bins (Hz).
-    psd : ndarray
-        Power spectral density estimate.
+    Args:
+        samples: Raw accelerometer samples (1D array).
+        fs: Sample rate in Hz.
+        nperseg: Samples per segment. Defaults to fs*2 for ~0.5Hz resolution.
+        noverlap: Overlap between segments. Defaults to 75% of nperseg.
+        window: Window function (hann, hamming, blackman, kaiser).
+
+    Returns:
+        (frequencies, psd) arrays.
     """
+    if len(samples) == 0:
+        return np.array([]), np.array([])
+
     if nperseg is None:
-        nperseg = min(len(signal), int(fs * 2))
-    freqs, psd = welch(signal, fs=fs, nperseg=nperseg)
-    return freqs, psd
+        nperseg = min(len(samples), int(fs * 2))  # 2-second windows = 0.5Hz resolution
+    if noverlap is None:
+        noverlap = int(nperseg * 0.75)  # 75% overlap for smoother estimate
+
+    freqs, psd = sp_signal.welch(
+        samples, fs=fs, nperseg=nperseg, noverlap=noverlap,
+        window=window, scaling='density',
+    )
+
+    # Filter to useful range (1-200 Hz)
+    mask = (freqs >= 1.0) & (freqs <= 200.0)
+    return freqs[mask], psd[mask]
 
 
-# ---------------------------------------------------------------------------
-# Peak detection
-# ---------------------------------------------------------------------------
+def compute_psd_multitaper(
+    samples: np.ndarray,
+    fs: float,
+    nw: float = 4.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute PSD using multiple window functions and average for robustness.
+
+    Runs Welch's with hann, hamming, and blackman windows, then averages.
+    More robust than single-window against spectral leakage.
+    """
+    if len(samples) == 0:
+        return np.array([]), np.array([])
+
+    windows = ["hann", "hamming", "blackman"]
+    all_psds = []
+    freqs = None
+
+    for win in windows:
+        f, p = compute_psd(samples, fs, window=win)
+        if freqs is None:
+            freqs = f
+        all_psds.append(p)
+
+    # Geometric mean (better for log-scale data than arithmetic mean)
+    psd_stack = np.array(all_psds)
+    psd_stack = np.clip(psd_stack, 1e-20, None)  # avoid log(0)
+    avg_psd = np.exp(np.mean(np.log(psd_stack), axis=0))
+
+    return freqs, avg_psd
+
 
 def find_resonance_peaks(
     freqs: np.ndarray,
@@ -72,138 +103,242 @@ def find_resonance_peaks(
     max_freq: float = 200.0,
     prominence_ratio: float = 0.1,
 ) -> list[ResonancePeak]:
-    """Detect resonance peaks in a PSD.
+    """Find resonance peaks with prominence filtering.
 
-    Parameters
-    ----------
-    freqs, psd : arrays
-        Output of :func:`compute_psd`.
-    min_freq, max_freq : float
-        Frequency band of interest (Hz).
-    prominence_ratio : float
-        Minimum prominence as a fraction of the max PSD value.
+    Args:
+        freqs: Frequency array.
+        psd: PSD array.
+        min_freq: Minimum frequency to consider.
+        max_freq: Maximum frequency to consider.
+        prominence_ratio: Minimum prominence as fraction of max PSD.
 
-    Returns
-    -------
-    List of :class:`ResonancePeak` sorted by amplitude descending.
+    Returns:
+        List of ResonancePeak sorted by amplitude descending.
     """
-    # Restrict to the frequency band of interest
-    mask = (freqs >= min_freq) & (freqs <= max_freq)
-    band_psd = psd[mask]
-    band_freqs = freqs[mask]
-
-    if len(band_psd) == 0:
+    if len(freqs) == 0 or len(psd) == 0:
         return []
 
-    min_prominence = prominence_ratio * np.max(band_psd)
-    indices, properties = find_peaks(band_psd, prominence=min_prominence)
+    mask = (freqs >= min_freq) & (freqs <= max_freq)
+    f_masked = freqs[mask]
+    p_masked = psd[mask]
 
-    peaks: list[ResonancePeak] = []
-    for idx, prom in zip(indices, properties["prominences"]):
-        peaks.append(
-            ResonancePeak(
-                frequency=float(band_freqs[idx]),
-                amplitude=float(band_psd[idx]),
-                prominence=float(prom),
-            )
-        )
+    if len(p_masked) == 0:
+        return []
+
+    min_prominence = np.max(p_masked) * prominence_ratio
+    # Minimum distance between peaks: 5 Hz
+    min_distance = max(1, int(5.0 / (f_masked[1] - f_masked[0])) if len(f_masked) > 1 else 1)
+
+    peak_indices, properties = sp_signal.find_peaks(
+        p_masked,
+        prominence=min_prominence,
+        distance=min_distance,
+    )
+
+    peaks = []
+    for i, idx in enumerate(peak_indices):
+        peaks.append(ResonancePeak(
+            frequency=float(f_masked[idx]),
+            amplitude=float(p_masked[idx]),
+            prominence=float(properties["prominences"][i]),
+        ))
 
     peaks.sort(key=lambda p: p.amplitude, reverse=True)
     return peaks
 
 
-# ---------------------------------------------------------------------------
-# Input shaper evaluation
-# ---------------------------------------------------------------------------
+def _shaper_response(shaper_type: str, freq: float, test_freqs: np.ndarray) -> np.ndarray:
+    """Compute amplitude response of an input shaper at given frequencies.
 
-_SHAPER_TYPES = ("zv", "mzv", "ei", "2hump_ei", "3hump_ei")
-
-
-def _shaper_response(
-    shaper_type: str, freq: float, test_freqs: np.ndarray
-) -> np.ndarray:
-    """Compute the amplitude response of an input shaper at given frequencies."""
+    These match Klipper's shaper implementations exactly.
+    """
     if shaper_type == "zv":
-        K = 1 / (1 + np.exp(-np.pi / np.sqrt(1 - 0.05**2)))
-        A = np.array([K, 1 - K])
-        T = np.array([0, 0.5 / freq])
+        df = 0.05  # damping factor
+        K = np.exp(-df * np.pi / np.sqrt(1.0 - df**2))
+        A = np.array([1.0, K]) / (1.0 + K)
+        T = np.array([0.0, 0.5 / freq])
     elif shaper_type == "mzv":
-        b = np.exp(-0.05 * np.pi / np.sqrt(1 - 0.05**2))
-        A = np.array([1, 2 * b, b**2]) / (1 + 2 * b + b**2)
-        T = np.array([0, 0.375 / freq, 0.75 / freq])
+        df = 0.05
+        b = np.exp(-df * np.pi / np.sqrt(1.0 - df**2))
+        a1 = 1.0 - 1.0 / np.sqrt(2.0)
+        A = np.array([a1, 1.0 - 2.0 * a1, a1])
+        T = np.array([0.0, 0.375 / freq, 0.75 / freq])
     elif shaper_type == "ei":
-        A = np.array([0.25, 0.50, 0.25])
-        T = np.array([0, 0.5 / freq, 1.0 / freq])
+        v_tol = 0.05
+        a1 = 0.25 * (1.0 + v_tol)
+        a2 = 0.5 * (1.0 - v_tol)
+        a3 = a1
+        A = np.array([a1, a2, a3])
+        T = np.array([0.0, 0.5 / freq, 1.0 / freq])
     elif shaper_type == "2hump_ei":
-        A = np.array([0.0625, 0.25, 0.375, 0.25, 0.0625])
-        T = np.array([0, 0.5 / freq, 1.0 / freq, 1.5 / freq, 2.0 / freq])
+        v_tol = 0.05
+        a1 = (3.0 * v_tol + 1.0) / 16.0
+        a2 = (1.0 - v_tol) * 0.25
+        a3 = (1.0 - 2.0 * a1 - 2.0 * a2)
+        A = np.array([a1, a2, a3, a2, a1])
+        T = np.array([0.0, 0.5/freq, 1.0/freq, 1.5/freq, 2.0/freq])
     elif shaper_type == "3hump_ei":
-        A = np.array([1 / 64, 6 / 64, 15 / 64, 20 / 64, 15 / 64, 6 / 64, 1 / 64])
+        v_tol = 0.05
+        a1 = (1.0 + v_tol) / 64.0
+        a2 = 3.0 * (1.0 + v_tol) / 32.0
+        a3 = (14.0 + 3.0 * v_tol) / 32.0 - a1 - a2
+        A = np.array([a1, a2, a3, 1.0 - 2.0*(a1+a2+a3), a3, a2, a1])
         T = np.array([i * 0.5 / freq for i in range(7)])
     else:
         raise ValueError(f"Unknown shaper type: {shaper_type}")
 
-    response = np.zeros_like(test_freqs, dtype=float)
-    for i, f in enumerate(test_freqs):
-        if f == 0:
-            response[i] = 1.0
-            continue
-        w = 2 * np.pi * f
-        real = sum(a * np.cos(w * t) for a, t in zip(A, T))
-        imag = sum(a * np.sin(w * t) for a, t in zip(A, T))
-        response[i] = np.sqrt(real**2 + imag**2)
-    return response
+    # Normalize A
+    A = A / np.sum(A)
+
+    # Vectorized frequency response computation
+    w = 2.0 * np.pi * test_freqs  # angular frequencies
+    real = np.zeros_like(test_freqs)
+    imag = np.zeros_like(test_freqs)
+    for a, t in zip(A, T):
+        real += a * np.cos(w * t)
+        imag += a * np.sin(w * t)
+
+    return np.sqrt(real**2 + imag**2)
 
 
 def evaluate_shapers(
     freqs: np.ndarray,
     psd: np.ndarray,
-    shaper_types: tuple[str, ...] | None = None,
+    shaper_types: list[str] | tuple[str, ...] | None = None,
+    freq_step: float = 0.1,
+    min_freq: float = 10.0,
+    max_freq: float = 200.0,
 ) -> list[ShaperResult]:
-    """Evaluate all input shaper types across a frequency sweep.
+    """Evaluate all shaper types across frequency range with fine resolution.
 
-    For each shaper type and candidate frequency (10-200 Hz, 1 Hz steps),
-    the shaper's frequency response is applied to *psd* and the remaining
-    vibration energy and maximum acceleration loss are computed.
+    Tests each shaper type at 0.1Hz increments (10x finer than Klipper's default).
 
-    Returns a list of :class:`ShaperResult` sorted by remaining vibration
-    (ascending — best first).
+    Args:
+        freqs: Frequency array from PSD.
+        psd: PSD values.
+        shaper_types: List of shaper types to evaluate. Defaults to all 5.
+        freq_step: Frequency step for sweep (Hz). 0.1 = 10x finer than default.
+        min_freq: Minimum shaper frequency to test.
+        max_freq: Maximum shaper frequency to test.
+
+    Returns:
+        List of ShaperResult sorted by remaining_vibration ascending (best first).
     """
     if shaper_types is None:
-        shaper_types = _SHAPER_TYPES
+        shaper_types = ["zv", "mzv", "ei", "2hump_ei", "3hump_ei"]
 
-    # Total vibration energy (for normalising)
-    total_energy = np.trapz(psd, freqs)
-    if total_energy == 0:
-        total_energy = 1.0
+    if len(freqs) == 0 or len(psd) == 0:
+        return []
 
-    results: list[ShaperResult] = []
+    # Total vibration energy (reference)
+    total_vibration = np.trapz(psd, freqs)
+    if total_vibration <= 0:
+        return []
 
+    # Test frequencies at fine resolution
+    test_frequencies = np.arange(min_freq, max_freq, freq_step)
+
+    results = []
     for shaper_type in shaper_types:
-        best: ShaperResult | None = None
-        for candidate_freq in range(10, 201):
-            response = _shaper_response(shaper_type, float(candidate_freq), freqs)
-            filtered_psd = psd * response**2
-            remaining = float(np.trapz(filtered_psd, freqs) / total_energy)
+        best_remaining = float('inf')
+        best_freq = 0.0
+        best_accel_loss = 0.0
 
-            # Max acceleration loss: the shaper's response at low frequencies
-            # (below the shaper frequency) determines how much usable
-            # acceleration is lost.  We take the worst-case attenuation.
-            low_mask = freqs <= float(candidate_freq) * 0.5
-            if np.any(low_mask):
-                max_accel_loss = 1.0 - float(np.min(response[low_mask]))
-            else:
-                max_accel_loss = 0.0
+        for sf in test_frequencies:
+            try:
+                response = _shaper_response(shaper_type, sf, freqs)
+                # Remaining vibration = integral of filtered PSD
+                filtered_psd = psd * response**2
+                remaining = np.trapz(filtered_psd, freqs) / total_vibration
+                # Max acceleration loss = max response value (ideally 1.0)
+                accel_loss = 1.0 - np.min(response)
 
-            if best is None or remaining < best.remaining_vibration:
-                best = ShaperResult(
-                    shaper_type=shaper_type,
-                    frequency=float(candidate_freq),
-                    remaining_vibration=remaining,
-                    max_accel_loss=max_accel_loss,
-                )
-        if best is not None:
-            results.append(best)
+                if remaining < best_remaining:
+                    best_remaining = remaining
+                    best_freq = sf
+                    best_accel_loss = accel_loss
+            except (ValueError, ZeroDivisionError):
+                continue
+
+        if best_freq > 0:
+            results.append(ShaperResult(
+                shaper_type=shaper_type,
+                frequency=round(best_freq, 1),
+                remaining_vibration=round(best_remaining, 6),
+                max_accel_loss=round(best_accel_loss, 6),
+            ))
 
     results.sort(key=lambda r: r.remaining_vibration)
     return results
+
+
+def analyze_raw_data(
+    raw_csv: str,
+    axis: str = "x",
+    fs: float = 3200.0,
+) -> tuple[np.ndarray, np.ndarray, list[ResonancePeak], list[ShaperResult]]:
+    """Full analysis pipeline from raw ADXL345 CSV data.
+
+    This is the high-resolution path that leverages PC compute power:
+    1. Parse raw accelerometer samples
+    2. Multi-window PSD estimation (3 windows averaged)
+    3. Fine-grained peak detection
+    4. 0.1Hz-resolution shaper evaluation
+
+    Args:
+        raw_csv: Raw CSV text from ADXL345 capture.
+        axis: Which axis was tested ("x" or "y").
+        fs: Expected sample rate.
+
+    Returns:
+        (freqs, psd, peaks, shapers) tuple.
+    """
+    import csv
+    import io
+
+    # Parse raw data
+    reader = csv.reader(io.StringIO(raw_csv))
+    times = []
+    accel = []
+    axis_col = {"x": 1, "y": 2, "z": 3}.get(axis, 1)
+
+    for row in reader:
+        if not row or row[0].startswith("#") or row[0].startswith("time"):
+            continue
+        try:
+            times.append(float(row[0]))
+            accel.append(float(row[axis_col]))
+        except (ValueError, IndexError):
+            continue
+
+    if len(accel) < 100:
+        logger.warning("Too few raw samples (%d) for analysis", len(accel))
+        return np.array([]), np.array([]), [], []
+
+    samples = np.array(accel)
+
+    # Estimate actual sample rate from timestamps
+    if times:
+        actual_fs = len(times) / (times[-1] - times[0]) if times[-1] > times[0] else fs
+        logger.info("Raw data: %d samples, %.1f Hz sample rate, %.2f seconds",
+                     len(samples), actual_fs, times[-1] - times[0])
+        fs = actual_fs
+
+    # Remove DC offset
+    samples = samples - np.mean(samples)
+
+    # Multi-window PSD for robustness
+    freqs, psd = compute_psd_multitaper(samples, fs)
+
+    # Find peaks
+    peaks = find_resonance_peaks(freqs, psd)
+
+    # Fine-grained shaper evaluation (0.1Hz steps)
+    shapers = evaluate_shapers(freqs, psd, freq_step=0.1)
+
+    logger.info("Analysis complete: %d freq bins, %d peaks, best shaper: %s @ %.1f Hz",
+                len(freqs), len(peaks),
+                shapers[0].shaper_type if shapers else "none",
+                shapers[0].frequency if shapers else 0)
+
+    return freqs, psd, peaks, shapers

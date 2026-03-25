@@ -6,8 +6,10 @@ import pytest
 from printopt.plugins.vibration.plugin import VibrationPlugin
 from printopt.plugins.vibration.analysis import (
     compute_psd,
+    compute_psd_multitaper,
     find_resonance_peaks,
     evaluate_shapers,
+    analyze_raw_data,
     ShaperResult,
     ResonancePeak,
 )
@@ -125,3 +127,64 @@ class TestVibrationPluginResults:
         data = plugin.get_dashboard_data()
         assert "x" in data["results"]
         assert data["results"]["x"]["best"]["shaper_type"] == "ei"
+
+
+class TestEnhancedAnalysis:
+    def test_compute_psd_high_resolution(self):
+        """High-res PSD should have more frequency bins than default."""
+        fs = 3200
+        duration = 5.0
+        t = np.arange(0, duration, 1/fs)
+        signal = np.sin(2 * np.pi * 50 * t) + 0.1 * np.random.randn(len(t))
+
+        freqs, psd = compute_psd(signal, fs)
+        # With 2-second windows at 3200Hz, should have ~400 freq bins in 1-200Hz range
+        assert len(freqs) > 200
+
+    def test_compute_psd_multitaper(self):
+        """Multi-taper should produce smoother PSD."""
+        fs = 3200
+        t = np.arange(0, 3.0, 1/fs)
+        signal = np.sin(2 * np.pi * 60 * t) + 0.2 * np.random.randn(len(t))
+
+        freqs, psd = compute_psd_multitaper(signal, fs)
+        assert len(freqs) > 0
+        peak_idx = np.argmax(psd)
+        assert abs(freqs[peak_idx] - 60) < 3
+
+    def test_fine_frequency_sweep(self):
+        """0.1Hz steps should give more precise frequency than 1Hz."""
+        fs = 3200
+        t = np.arange(0, 3.0, 1/fs)
+        signal = np.sin(2 * np.pi * 45.3 * t) + 0.1 * np.random.randn(len(t))
+
+        freqs, psd = compute_psd(signal, fs)
+
+        # Fine sweep (0.1Hz)
+        fine_results = evaluate_shapers(freqs, psd, freq_step=0.1)
+        # Coarse sweep (1Hz)
+        coarse_results = evaluate_shapers(freqs, psd, freq_step=1.0)
+
+        # Fine should have better (lower) remaining vibration
+        assert fine_results[0].remaining_vibration <= coarse_results[0].remaining_vibration + 0.01
+
+    def test_analyze_raw_data(self):
+        """Full pipeline from raw CSV should produce results."""
+        # Generate fake raw CSV
+        fs = 3200
+        t = np.arange(0, 2.0, 1/fs)
+        accel_x = np.sin(2 * np.pi * 50 * t) + 0.1 * np.random.randn(len(t))
+        accel_y = 0.5 * np.sin(2 * np.pi * 80 * t) + 0.1 * np.random.randn(len(t))
+        accel_z = 0.1 * np.random.randn(len(t))
+
+        lines = ["#time,accel_x,accel_y,accel_z"]
+        for i in range(len(t)):
+            lines.append(f"{t[i]:.6f},{accel_x[i]:.4f},{accel_y[i]:.4f},{accel_z[i]:.4f}")
+        raw_csv = "\n".join(lines)
+
+        freqs, psd, peaks, shapers = analyze_raw_data(raw_csv, axis="x", fs=fs)
+        assert len(freqs) > 100
+        assert len(peaks) >= 1
+        assert any(abs(p.frequency - 50) < 5 for p in peaks)
+        assert len(shapers) > 0
+        assert shapers[0].frequency > 0

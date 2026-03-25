@@ -239,11 +239,13 @@ async def _dashboard_vibration_analyze(client: MoonrakerClient, mgr: PluginManag
         from printopt.plugins.vibration.capture import (
             run_vibration_test,
             fetch_resonance_csv,
+            fetch_raw_accel_csv,
             parse_accel_csv,
         )
         from printopt.plugins.vibration.analysis import (
             find_resonance_peaks,
             evaluate_shapers,
+            analyze_raw_data,
         )
         import csv as csv_mod
         import io
@@ -258,7 +260,24 @@ async def _dashboard_vibration_analyze(client: MoonrakerClient, mgr: PluginManag
             # Wait a moment for Klipper to write CSV
             await asyncio.sleep(3)
 
-            # Fetch the CSV data from the printer
+            # Try to fetch raw data first (higher resolution analysis)
+            raw_csv = await fetch_raw_accel_csv(client, axis)
+            if raw_csv and len(raw_csv) > 100:
+                logger.info("Using raw ADXL345 data for %s axis (high-resolution)", axis)
+                freqs, psd, peaks, shapers = analyze_raw_data(raw_csv, axis=axis)
+                if len(freqs) > 0:
+                    vib_plugin.store_results(axis, peaks, shapers, freqs.tolist(), psd.tolist())
+                    best = shapers[0] if shapers else None
+                    logger.info(
+                        "%s axis (raw): %d freq bins, %d peaks, best: %s @ %.1f Hz",
+                        axis.upper(), len(freqs), len(peaks),
+                        best.shaper_type if best else "none",
+                        best.frequency if best else 0,
+                    )
+                    continue
+
+            # Fallback: use Klipper's pre-processed PSD
+            logger.info("Using Klipper PSD for %s axis (standard resolution)", axis)
             csv_text = await fetch_resonance_csv(client, axis)
             if not csv_text:
                 logger.warning("No CSV data for %s axis, skipping analysis", axis)

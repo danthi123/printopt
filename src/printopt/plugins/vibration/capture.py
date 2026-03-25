@@ -61,7 +61,8 @@ async def run_vibration_test(
     await client.inject(
         f"TEST_RESONANCES AXIS={axis.upper()} "
         f"FREQ_START={min_freq} FREQ_END={max_freq} "
-        f"HZ_PER_SEC={hz_per_sec}"
+        f"HZ_PER_SEC={hz_per_sec} "
+        f"OUTPUT=resonances,raw_data"
     )
 
     # Wait for test to complete (typically 10-30 seconds)
@@ -131,6 +132,41 @@ async def fetch_resonance_csv(client: MoonrakerClient, axis: str) -> str:
         return ""
 
     logger.info("Fetched %s (%d bytes)", csv_path, len(result.stdout))
+    return result.stdout
+
+
+async def fetch_raw_accel_csv(client: MoonrakerClient, axis: str) -> str:
+    """Fetch the most recent raw accelerometer CSV for an axis."""
+    axis = axis.lower()
+    host = client.host
+    try:
+        result = subprocess.run(
+            ["ssh", f"root@{host}",
+             f"ls -t /tmp/raw_data_{axis}_*.csv 2>/dev/null | head -1"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("SSH failed for raw data %s: %s", axis, exc)
+        return ""
+
+    csv_path = result.stdout.strip()
+    if not csv_path:
+        logger.warning("No raw data CSV found for %s axis", axis)
+        return ""
+
+    try:
+        result = subprocess.run(
+            ["ssh", f"root@{host}", f"cat {csv_path}"],
+            capture_output=True, text=True, timeout=30,  # raw files are larger
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("SSH cat failed for raw %s: %s", csv_path, exc)
+        return ""
+
+    if result.returncode != 0:
+        return ""
+
+    logger.info("Fetched raw data %s (%d bytes)", csv_path, len(result.stdout))
     return result.stdout
 
 
