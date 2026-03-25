@@ -25,6 +25,7 @@ class FlowPlugin(Plugin):
         self.total_adjustments = 0
         self._kill = False
         self._moonraker = None  # Set externally for gcode injection
+        self._thermal_plugin = None  # Set externally if thermal plugin is active
         self._print_start_time: float = 0
         self._current_progress: float = 0
         self._print_state: str = "standby"
@@ -83,6 +84,33 @@ class FlowPlugin(Plugin):
             current_time=current_time,
             lookahead_seconds=5.0,
         )
+
+        # Apply thermal adjustments if available
+        if self._thermal_plugin and self._thermal_plugin.grid:
+            from printopt.plugins.flow.thermal_bridge import ThermalFlowBridge
+            bridge = ThermalFlowBridge(
+                glass_transition=self._thermal_plugin.grid.config.glass_transition
+            )
+            heatmap = self._thermal_plugin.grid.get_heatmap()
+            resolution = self._thermal_plugin.grid.config.resolution
+
+            # Check thermal state at upcoming positions
+            if self.parse_result:
+                current_idx = int(self._current_progress / 100.0 * len(self.parse_result.moves))
+                lookahead_moves = self.parse_result.moves[current_idx:current_idx+20]
+                for move in lookahead_moves:
+                    if move.is_extrusion:
+                        tc = bridge.evaluate_position(heatmap, move.x, move.y, resolution)
+                        if tc.speed_factor != 1.0:
+                            # Only add thermal compensation if significant
+                            compensations.append(Compensation(
+                                type="M220",
+                                value=f"M220 S{int(tc.speed_factor * 100)}",
+                                feature_type=FeatureType.LAYER_CHANGE,
+                                line_number=move.line_number,
+                                estimated_time=move.cumulative_time,
+                            ))
+                            break  # One thermal adjustment per cycle
 
         self.active_compensations = compensations
 

@@ -127,6 +127,36 @@ async def _poll_printer_status(client: MoonrakerClient, mgr: PluginManager) -> N
             await broadcast_state(state_update)
             await mgr.broadcast_status(printer_status)
 
+            # Detect print start - fetch gcode and notify plugins
+            if printer_status["state"] == "printing" and printer_status["filename"]:
+                current_file = printer_status["filename"]
+                if not hasattr(_poll_printer_status, '_last_print_file') or _poll_printer_status._last_print_file != current_file:
+                    _poll_printer_status._last_print_file = current_file
+                    try:
+                        import urllib.request
+                        gcode_url = f"http://{client.host}:{client.port}/server/files/gcodes/{current_file}"
+                        with urllib.request.urlopen(gcode_url, timeout=30) as resp:
+                            gcode_content = resp.read().decode('utf-8', errors='replace')
+                        logger.info("Fetched gcode: %s (%d bytes)", current_file, len(gcode_content))
+                        for plugin in mgr.plugins.values():
+                            if plugin.enabled:
+                                try:
+                                    await plugin.on_print_start(current_file, gcode_content)
+                                except Exception as e:
+                                    logger.error("Plugin %s on_print_start error: %s", plugin.name, e)
+                    except Exception as e:
+                        logger.warning("Could not fetch gcode file: %s", e)
+
+            # Detect print end
+            if printer_status["state"] in ("standby", "complete", "cancelled") and hasattr(_poll_printer_status, '_last_print_file') and _poll_printer_status._last_print_file:
+                _poll_printer_status._last_print_file = ""
+                for plugin in mgr.plugins.values():
+                    if plugin.enabled:
+                        try:
+                            await plugin.on_print_end()
+                        except Exception as e:
+                            logger.error("Plugin %s on_print_end error: %s", plugin.name, e)
+
             # Also update _state directly as backup
             from printopt.dashboard.server import _state
             _state.update(state_update)
@@ -205,6 +235,17 @@ async def do_run(
         for name in active:
             if name in plugin_map:
                 mgr.register(plugin_map[name]())
+
+        # Inject Moonraker client into plugins that need it
+        for name, plugin in mgr.plugins.items():
+            if hasattr(plugin, '_moonraker'):
+                plugin._moonraker = client
+
+        # Cross-wire plugins
+        flow = mgr.plugins.get("flow")
+        thermal = mgr.plugins.get("thermal")
+        if flow and thermal and hasattr(flow, '_thermal_plugin'):
+            flow._thermal_plugin = thermal
 
         await mgr.start_all()
         print(f"Plugin manager started ({len(mgr.plugins)} plugins)")
