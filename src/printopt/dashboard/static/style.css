@@ -1,0 +1,13 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: #16213e; }
+header h1 { font-size: 18px; }
+#connection-status { font-size: 12px; padding: 4px 8px; border-radius: 4px; background: #c0392b; }
+#connection-status.connected { background: #27ae60; }
+#layout { display: flex; height: calc(100vh - 100px); }
+#sidebar { width: 220px; padding: 16px; background: #0f3460; overflow-y: auto; }
+#sidebar h3 { margin: 12px 0 6px; font-size: 13px; text-transform: uppercase; color: #888; }
+#main-panel { flex: 1; padding: 20px; overflow-y: auto; }
+footer { padding: 10px 20px; background: #16213e; text-align: center; }
+#btn-kill { background: #c0392b; color: white; border: none; padding: 8px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+#btn-kill:hover { background: #e74c3c; }
