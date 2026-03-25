@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "printopt"
+version = "0.1.0"
+description = "PC-assisted print optimization for Klipper CoreXY printers"
+requires-python = ">=3.10"
+dependencies = [
+    "websockets>=12.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+gpu = ["cupy-cuda12x>=13.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov", "httpx"]
+
+[project.scripts]
+printopt = "printopt.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
