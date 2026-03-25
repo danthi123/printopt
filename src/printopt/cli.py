@@ -6,9 +6,10 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from printopt.core.moonraker import MoonrakerClient
+from printopt.core.plugin import PluginManager
 from printopt.core.printer import PrinterConfig, discover_printer
 
 
@@ -53,6 +54,63 @@ async def do_connect(
             await client.disconnect()
 
 
+async def do_run(
+    plugins: str = "all",
+    port: int = 8484,
+    profile: str | None = None,
+    config_dir: Path | None = None,
+    _client: Any = None,
+) -> None:
+    """Start the optimization daemon with dashboard."""
+    config_dir = config_dir or get_config_dir()
+    config_path = config_dir / "printer.json"
+    if not config_path.exists():
+        print("No printer configured. Run 'printopt connect <host>' first.")
+        sys.exit(1)
+
+    config = PrinterConfig.load(config_path)
+    print(f"Loaded config for {config.host} ({config.kinematics}, {config.bed_x}x{config.bed_y})")
+
+    # Connect to Moonraker
+    if _client is None:
+        client = MoonrakerClient(config.host)
+        await client.connect()
+        print(f"Connected to Moonraker at {config.host}")
+    else:
+        client = _client
+
+    # Initialize plugin manager
+    mgr = PluginManager()
+    # Plugins will be registered here as they're implemented
+    # For now, just start empty
+    await mgr.start_all()
+    print(f"Plugin manager started ({len(mgr.plugins)} plugins)")
+
+    # Update dashboard state
+    from printopt.dashboard.server import _state
+    _state["printer"]["connected"] = True
+    _state["printer"]["host"] = config.host
+
+    # Start dashboard
+    print(f"Dashboard at http://localhost:{port}")
+
+    import uvicorn
+    from printopt.dashboard.server import create_app
+    app = create_app()
+
+    server_config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
+    server = uvicorn.Server(server_config)
+    try:
+        await server.serve()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await mgr.stop_all()
+        if _client is None:
+            await client.disconnect()
+        print("printopt stopped")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="printopt",
@@ -90,6 +148,14 @@ def main() -> None:
         config = asyncio.run(do_connect(args.host))
         print(f"Connected to {config.host} ({config.kinematics}, "
               f"bed {config.bed_x}x{config.bed_y}x{config.bed_z})")
+        return
+
+    if args.command == "run":
+        asyncio.run(do_run(
+            plugins=args.plugins,
+            port=args.port,
+            profile=args.profile,
+        ))
         return
 
     print(f"printopt: {args.command} (not yet implemented)")
