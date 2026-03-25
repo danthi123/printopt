@@ -17,6 +17,14 @@ _state = {
     "plugins": {},
 }
 _ws_clients: list[WebSocket] = []
+_poll_callback = None  # Set by do_run before starting the app
+_poll_task = None
+
+
+def set_poll_callback(callback) -> None:
+    """Register the status polling coroutine to run on startup."""
+    global _poll_callback
+    _poll_callback = callback
 
 
 def create_app() -> FastAPI:
@@ -24,6 +32,21 @@ def create_app() -> FastAPI:
 
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    @app.on_event("startup")
+    async def start_polling():
+        global _poll_task
+        if _poll_callback is not None:
+            import asyncio
+            # _poll_callback returns a coroutine; wrap in create_task so
+            # startup completes immediately while polling runs in background
+            coro = _poll_callback()
+            _poll_task = asyncio.create_task(coro)
+
+    @app.on_event("shutdown")
+    async def stop_polling():
+        if _poll_task is not None:
+            _poll_task.cancel()
 
     @app.get("/", response_class=HTMLResponse)
     async def index():

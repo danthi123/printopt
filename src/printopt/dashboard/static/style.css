@@ -5,8 +5,9 @@ header h1 { font-size: 18px; }
 #connection-status { font-size: 12px; padding: 4px 8px; border-radius: 4px; background: #c0392b; }
 #connection-status.connected { background: #27ae60; }
 #layout { display: flex; height: calc(100vh - 100px); }
-#sidebar { width: 220px; padding: 16px; background: #0f3460; overflow-y: auto; }
+#sidebar { width: 260px; padding: 16px; background: #0f3460; overflow-y: auto; }
 #sidebar h3 { margin: 12px 0 6px; font-size: 13px; text-transform: uppercase; color: #888; }
+#printer-status, #plugin-list { font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; white-space: pre; line-height: 1.5; color: #ccc; }
 #main-panel { flex: 1; padding: 20px; overflow-y: auto; }
 footer { padding: 10px 20px; background: #16213e; text-align: center; }
 #btn-kill { background: #c0392b; color: white; border: none; padding: 8px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }

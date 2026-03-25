@@ -26,20 +26,57 @@ function connect() {
     };
 }
 
+function formatDuration(seconds) {
+    if (!seconds || seconds <= 0) return '--:--';
+    var h = Math.floor(seconds / 3600);
+    var m = Math.floor((seconds % 3600) / 60);
+    var s = Math.floor(seconds % 60);
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm ' + s + 's';
+}
+
 function updatePrinter(printer) {
-    const s = printer.status || {};
-    const bed = s.bed_temp !== undefined ? s.bed_temp : '--';
-    const nozzle = s.nozzle_temp !== undefined ? s.nozzle_temp : '--';
-    const fan = s.fan_speed !== undefined ? s.fan_speed : '--';
-    const z = s.z_position !== undefined ? s.z_position : '--';
-    const prog = s.progress !== undefined ? s.progress : 0;
-    printerEl.textContent = 'Bed: ' + bed + 'C | Nozzle: ' + nozzle + 'C | Fan: ' + fan + '% | Z: ' + z + ' | Progress: ' + prog + '%';
+    var s = printer.status || {};
+    var host = printer.host || '--';
+
+    var lines = [];
+    lines.push(host);
+    lines.push('');
+
+    var state = (s.state || 'unknown').toUpperCase();
+    lines.push('State: ' + state);
+
+    if (s.filename) {
+        lines.push('File: ' + s.filename);
+    }
+
+    lines.push('');
+    lines.push('Nozzle: ' + (s.nozzle_temp || '--') + ' / ' + (s.nozzle_target || '--') + ' C');
+    lines.push('Bed:    ' + (s.bed_temp || '--') + ' / ' + (s.bed_target || '--') + ' C');
+    lines.push('Fan:    ' + (s.fan_speed !== undefined ? s.fan_speed : '--') + '%');
+
+    lines.push('');
+    lines.push('X: ' + (s.x_position !== undefined ? s.x_position : '--'));
+    lines.push('Y: ' + (s.y_position !== undefined ? s.y_position : '--'));
+    lines.push('Z: ' + (s.z_position !== undefined ? s.z_position : '--'));
+
+    if (s.progress !== undefined && s.progress > 0) {
+        lines.push('');
+        lines.push('Progress: ' + s.progress + '%');
+        lines.push('Duration: ' + formatDuration(s.print_duration));
+    }
+
+    printerEl.textContent = lines.join('\n');
 }
 
 function updatePlugins(plugins) {
-    const names = Object.keys(plugins);
-    const lines = names.map(function(name) {
-        return (plugins[name].enabled ? '[ON] ' : '[OFF] ') + name;
+    var names = Object.keys(plugins);
+    if (names.length === 0) {
+        pluginEl.textContent = 'No plugins active';
+        return;
+    }
+    var lines = names.map(function(name) {
+        return (plugins[name].enabled ? '[ON]  ' : '[OFF] ') + name;
     });
     pluginEl.textContent = lines.join('\n');
 }

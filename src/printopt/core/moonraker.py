@@ -53,7 +53,8 @@ class MoonrakerClient:
         if params:
             request["params"] = params
 
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
         self._pending[req_id] = future
 
         await self._ws.send(json.dumps(request))
@@ -61,6 +62,7 @@ class MoonrakerClient:
         if not self._listen_task or self._listen_task.done():
             raw = await self._ws.recv()
             msg = json.loads(raw)
+            self._pending.pop(req_id, None)
             if "result" in msg:
                 return msg["result"]
             if "error" in msg:

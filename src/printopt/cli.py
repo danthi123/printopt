@@ -59,6 +59,72 @@ async def do_connect(
             await client.disconnect()
 
 
+async def _poll_printer_status(client: MoonrakerClient, mgr: PluginManager) -> None:
+    """Background task: poll Moonraker for printer status and broadcast."""
+    from printopt.dashboard.server import broadcast_state
+    import logging
+    logger = logging.getLogger(__name__)
+
+    while True:
+        try:
+            result = await client.query(
+                "printer.objects.query",
+                {"objects": {
+                    "heater_bed": ["temperature", "target"],
+                    "extruder": ["temperature", "target"],
+                    "fan_generic cooling_fan": ["speed"],
+                    "toolhead": ["position", "homed_axes"],
+                    "virtual_sdcard": ["progress", "is_active", "file_path"],
+                    "print_stats": ["state", "filename", "total_duration", "print_duration"],
+                    "display_status": ["progress"],
+                }},
+            )
+            status = result.get("status", {})
+
+            bed = status.get("heater_bed", {})
+            ext = status.get("extruder", {})
+            fan = status.get("fan_generic cooling_fan", status.get("fan", {}))
+            toolhead = status.get("toolhead", {})
+            vsd = status.get("virtual_sdcard", {})
+            ps = status.get("print_stats", {})
+            ds = status.get("display_status", {})
+            pos = toolhead.get("position", [0, 0, 0, 0])
+
+            printer_status = {
+                "bed_temp": round(bed.get("temperature", 0), 1),
+                "bed_target": round(bed.get("target", 0), 1),
+                "nozzle_temp": round(ext.get("temperature", 0), 1),
+                "nozzle_target": round(ext.get("target", 0), 1),
+                "fan_speed": round((fan.get("speed") or 0) * 100, 0),
+                "x_position": round(pos[0], 1),
+                "y_position": round(pos[1], 1),
+                "z_position": round(pos[2], 2),
+                "progress": round(ds.get("progress", vsd.get("progress", 0)) * 100, 1),
+                "state": ps.get("state", "unknown"),
+                "filename": ps.get("filename", ""),
+                "print_duration": round(ps.get("print_duration", 0), 0),
+            }
+
+            state_update = {
+                "printer": {
+                    "connected": True,
+                    "host": client.host,
+                    "status": printer_status,
+                },
+            }
+            await broadcast_state(state_update)
+            await mgr.broadcast_status(printer_status)
+
+            # Also update _state directly as backup
+            from printopt.dashboard.server import _state
+            _state.update(state_update)
+
+        except Exception as e:
+            logger.warning("Status poll error: %s: %s", type(e).__name__, e)
+
+        await asyncio.sleep(1.0)
+
+
 async def do_run(
     plugins: str = "all",
     port: int = 8484,
@@ -76,31 +142,31 @@ async def do_run(
     config = PrinterConfig.load(config_path)
     print(f"Loaded config for {config.host} ({config.kinematics}, {config.bed_x}x{config.bed_y})")
 
-    # Connect to Moonraker
-    if _client is None:
-        client = MoonrakerClient(config.host)
-        await client.connect()
-        print(f"Connected to Moonraker at {config.host}")
-    else:
-        client = _client
+    # Register a startup callback that creates the Moonraker connection
+    # inside uvicorn's event loop (connections can't cross event loops)
+    from printopt.dashboard.server import set_poll_callback, create_app
 
-    # Initialize plugin manager
-    mgr = PluginManager()
-    # Plugins will be registered here as they're implemented
-    # For now, just start empty
-    await mgr.start_all()
-    print(f"Plugin manager started ({len(mgr.plugins)} plugins)")
+    async def _startup_and_poll():
+        own = _client is None
+        if own:
+            client = MoonrakerClient(config.host)
+            await client.connect()
+            print(f"Connected to Moonraker at {config.host}")
+        else:
+            client = _client
 
-    # Update dashboard state
-    from printopt.dashboard.server import _state
-    _state["printer"]["connected"] = True
-    _state["printer"]["host"] = config.host
+        mgr = PluginManager()
+        await mgr.start_all()
+        print(f"Plugin manager started ({len(mgr.plugins)} plugins)")
+
+        await _poll_printer_status(client, mgr)
+
+    set_poll_callback(_startup_and_poll)
 
     # Start dashboard
     print(f"Dashboard at http://localhost:{port}")
 
     import uvicorn
-    from printopt.dashboard.server import create_app
     app = create_app()
 
     server_config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
@@ -110,9 +176,6 @@ async def do_run(
     except KeyboardInterrupt:
         pass
     finally:
-        await mgr.stop_all()
-        if _client is None:
-            await client.disconnect()
         print("printopt stopped")
 
 
