@@ -30,12 +30,16 @@ async def run_vibration_test(
     axis: str = "x",
     min_freq: float = 5.0,
     max_freq: float = 133.0,
-    accel_per_hz: float = 75.0,
+    hz_per_sec: float = 1.0,
 ) -> str:
     """Run a resonance test on the printer and return the CSV filename.
 
-    Sends SHAPER_CALIBRATE-style test movements and captures accelerometer data.
-    Returns the filename of the CSV on the printer (in /tmp/).
+    Args:
+        client: Moonraker client.
+        axis: "x" or "y".
+        min_freq: Start frequency in Hz.
+        max_freq: End frequency in Hz.
+        hz_per_sec: Frequency sweep rate (Klipper max is 2.0).
     """
     axis = axis.lower()
     if axis not in ("x", "y"):
@@ -44,20 +48,19 @@ async def run_vibration_test(
     # Home the printer first
     logger.info("Homing printer...")
     await client.inject("G28")
-    await asyncio.sleep(2)
+    await asyncio.sleep(15)
 
     # Move to test position (center of bed)
     logger.info("Moving to test position...")
     await client.inject("G1 X120 Y120 Z10 F6000")
-    await asyncio.sleep(2)
+    await asyncio.sleep(3)
 
     # Run the resonance test using Klipper's TEST_RESONANCES command
-    # This captures ADXL345 data and saves CSVs to /tmp/
-    logger.info(f"Running resonance test on {axis.upper()} axis...")
+    logger.info("Running resonance test on %s axis...", axis.upper())
     await client.inject(
         f"TEST_RESONANCES AXIS={axis.upper()} "
         f"FREQ_START={min_freq} FREQ_END={max_freq} "
-        f"HZ_PER_SEC={accel_per_hz / 2}"
+        f"HZ_PER_SEC={hz_per_sec}"
     )
 
     # Wait for test to complete (typically 10-30 seconds)
