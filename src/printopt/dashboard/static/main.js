@@ -371,17 +371,14 @@ function sendAction(action) {
     }
 }
 
+function doVibAnalyze(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    sendAction('run_vibration');
+    setTimeout(function() { btn.disabled = false; btn.textContent = 'Run Analysis'; }, 90000);
+}
+
 document.getElementById('btn-kill').addEventListener('click', killAll);
 document.getElementById('btn-reset').addEventListener('click', resetAll);
-document.getElementById('btn-vib-analyze').addEventListener('click', function() {
-    this.disabled = true;
-    this.textContent = 'Running...';
-    sendAction('run_vibration');
-    var btn = this;
-    setTimeout(function() { btn.disabled = false; btn.textContent = 'Run Analysis'; }, 90000);
-});
-document.getElementById('btn-flow-enable').addEventListener('click', function() { sendAction('enable_flow'); });
-document.getElementById('btn-flow-disable').addEventListener('click', function() { sendAction('disable_flow'); });
-document.getElementById('btn-thermal-enable').addEventListener('click', function() { sendAction('enable_thermal'); });
-document.getElementById('btn-thermal-disable').addEventListener('click', function() { sendAction('disable_thermal'); });
+// Plugin buttons use onclick handlers in HTML to avoid duplicate triggers
 connect();

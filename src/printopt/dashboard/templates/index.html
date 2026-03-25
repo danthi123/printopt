@@ -23,7 +23,7 @@
             <div id="panel-vibration" class="plugin-panel" style="display:none">
                 <h2>Vibration Analysis</h2>
                 <div class="panel-actions">
-                    <button class="action-btn" id="btn-vib-analyze">Run Analysis</button>
+                    <button class="action-btn" id="btn-vib-analyze" onclick="doVibAnalyze(this)">Run Analysis</button>
                 </div>
                 <div id="vib-status">No analysis data yet.</div>
                 <canvas id="vib-canvas" width="800" height="400"></canvas>
@@ -31,8 +31,8 @@
             <div id="panel-flow" class="plugin-panel" style="display:none">
                 <h2>Flow Compensation</h2>
                 <div class="panel-actions">
-                    <button class="action-btn action-on" id="btn-flow-enable">Enable</button>
-                    <button class="action-btn action-off" id="btn-flow-disable">Disable</button>
+                    <button class="action-btn action-on" id="btn-flow-enable" onclick="sendAction('enable_flow')">Enable</button>
+                    <button class="action-btn action-off" id="btn-flow-disable" onclick="sendAction('disable_flow')">Disable</button>
                 </div>
                 <div id="flow-stats"></div>
                 <div id="flow-timeline"></div>
@@ -41,8 +41,8 @@
             <div id="panel-thermal" class="plugin-panel" style="display:none">
                 <h2>Thermal Simulation</h2>
                 <div class="panel-actions">
-                    <button class="action-btn action-on" id="btn-thermal-enable">Enable</button>
-                    <button class="action-btn action-off" id="btn-thermal-disable">Disable</button>
+                    <button class="action-btn action-on" id="btn-thermal-enable" onclick="sendAction('enable_thermal')">Enable</button>
+                    <button class="action-btn action-off" id="btn-thermal-disable" onclick="sendAction('disable_thermal')">Disable</button>
                 </div>
                 <div id="thermal-stats"></div>
                 <canvas id="thermal-canvas" width="500" height="500"></canvas>
