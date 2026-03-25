@@ -1,7 +1,56 @@
 """CLI entry point for printopt."""
 
+from __future__ import annotations
+
 import argparse
+import asyncio
 import sys
+from pathlib import Path
+from typing import Optional
+
+from printopt.core.moonraker import MoonrakerClient
+from printopt.core.printer import PrinterConfig, discover_printer
+
+
+def get_config_dir() -> Path:
+    """Return the default config directory (~/.config/printopt)."""
+    return Path.home() / ".config" / "printopt"
+
+
+async def do_connect(
+    host: str,
+    config_dir: Optional[Path] = None,
+    _client: Optional[MoonrakerClient] = None,
+) -> PrinterConfig:
+    """Connect to a printer, discover its config, and save locally.
+
+    Args:
+        host: Printer IP or hostname.
+        config_dir: Directory to save config into; defaults to ~/.config/printopt.
+        _client: Optional pre-built client (for testing).
+
+    Returns:
+        The discovered PrinterConfig.
+    """
+    if config_dir is None:
+        config_dir = get_config_dir()
+
+    own_client = _client is None
+    client = _client or MoonrakerClient(host)
+
+    try:
+        if own_client:
+            await client.connect()
+
+        config = await discover_printer(client)
+
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config.save(config_dir / "printer.json")
+
+        return config
+    finally:
+        if own_client:
+            await client.disconnect()
 
 
 def main() -> None:
@@ -36,6 +85,12 @@ def main() -> None:
     if args.command is None:
         parser.print_help()
         sys.exit(1)
+
+    if args.command == "connect":
+        config = asyncio.run(do_connect(args.host))
+        print(f"Connected to {config.host} ({config.kinematics}, "
+              f"bed {config.bed_x}x{config.bed_y}x{config.bed_z})")
+        return
 
     print(f"printopt: {args.command} (not yet implemented)")
 
