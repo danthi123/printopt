@@ -118,10 +118,44 @@ class TestThermalPlugin:
         plugin = ThermalPlugin()
         await plugin.on_print_start("test.gcode", "G1 X10 Y10 E1 F1000")
         await plugin.on_print_end()
-        assert plugin.grid is None
+        assert plugin._print_active is False
 
     def test_dashboard_data(self):
         plugin = ThermalPlugin()
         data = plugin.get_dashboard_data()
         assert "layer" in data
         assert "material" in data
+
+    @pytest.mark.asyncio
+    async def test_status_update_tracks_position(self):
+        plugin = ThermalPlugin()
+        await plugin.on_print_start("test.gcode", "G1 X50 Y50 E1 F1000")
+        await plugin.on_status_update({
+            "state": "printing",
+            "x_position": 100.0,
+            "y_position": 100.0,
+            "z_position": 0.2,
+            "nozzle_temp": 248.0,
+            "fan_speed": 35.0,
+        })
+        assert plugin._last_x == 100.0
+        assert plugin._last_y == 100.0
+        assert plugin._nozzle_temp == 248.0
+
+    @pytest.mark.asyncio
+    async def test_downsample_heatmap(self):
+        plugin = ThermalPlugin()
+        await plugin.on_print_start("test.gcode", "G1 X50 Y50 E1 F1000")
+        heatmap = plugin._downsample_heatmap()
+        assert heatmap is not None
+        assert len(heatmap) <= 50
+        assert len(heatmap[0]) <= 50
+
+    @pytest.mark.asyncio
+    async def test_dashboard_data_with_grid(self):
+        plugin = ThermalPlugin()
+        await plugin.on_print_start("test.gcode", "G1 X50 Y50 E1 F1000")
+        data = plugin.get_dashboard_data()
+        assert "heatmap" in data
+        assert "nozzle_pos" in data
+        assert data["print_active"] is True
