@@ -188,10 +188,14 @@ async def _poll_printer_status(client: MoonrakerClient, mgr: PluginManager) -> N
                 if hasattr(plugin, '_kill'):
                     plugin._kill = False
 
-        # Handle plugin-specific actions from the dashboard
+        # Handle plugin-specific actions from the dashboard (deduplicate)
         from printopt.dashboard.server import get_pending_actions
+        seen_actions = set()
         for action_msg in get_pending_actions():
             action = action_msg.get("action", "")
+            if action in seen_actions:
+                continue
+            seen_actions.add(action)
             if action == "run_vibration":
                 logger.info("Vibration analysis triggered from dashboard")
                 asyncio.create_task(_dashboard_vibration_analyze(client, mgr))
