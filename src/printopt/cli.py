@@ -8,6 +8,11 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+from printopt.core.materials import (
+    MaterialProfile,
+    get_all_profiles,
+    save_custom_profile,
+)
 from printopt.core.moonraker import MoonrakerClient
 from printopt.core.plugin import PluginManager
 from printopt.core.printer import PrinterConfig, discover_printer
@@ -135,6 +140,48 @@ def do_vibration(args: argparse.Namespace) -> None:
     sys.exit(1)
 
 
+def do_profile_list(config_dir: Path | None = None) -> None:
+    """List all available filament profiles."""
+    config_dir = config_dir or get_config_dir()
+    profiles = get_all_profiles(config_dir)
+    if not profiles:
+        print("No profiles available.")
+        return
+    for name, p in sorted(profiles.items()):
+        print(
+            f"  {name:<16s} density={p.density:.2f}  Cp={p.specific_heat:.1f}  "
+            f"k={p.thermal_conductivity:.2f}  Tg={p.glass_transition:.0f}C"
+        )
+
+
+def do_profile_create(
+    name: str,
+    config_dir: Path | None = None,
+    *,
+    density: float = 1.27,
+    specific_heat: float = 1.2,
+    thermal_conductivity: float = 0.20,
+    glass_transition: float = 78,
+    cte: float = 60e-6,
+) -> Path:
+    """Create a custom filament profile.
+
+    Defaults are based on PETG.
+    """
+    config_dir = config_dir or get_config_dir()
+    profile = MaterialProfile(
+        name=name,
+        density=density,
+        specific_heat=specific_heat,
+        thermal_conductivity=thermal_conductivity,
+        glass_transition=glass_transition,
+        cte=cte,
+    )
+    path = save_custom_profile(profile, config_dir)
+    print(f"Profile '{name}' saved to {path}")
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="printopt",
@@ -185,6 +232,17 @@ def main() -> None:
     if args.command == "vibration":
         do_vibration(args)
         return
+
+    if args.command == "profile":
+        sub = getattr(args, "prof_command", None)
+        if sub == "list":
+            do_profile_list()
+            return
+        if sub == "create":
+            do_profile_create(args.name)
+            return
+        print("Usage: printopt profile {list,create}")
+        sys.exit(1)
 
     print(f"printopt: {args.command} (not yet implemented)")
 

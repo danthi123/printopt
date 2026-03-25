@@ -42,3 +42,34 @@ def get_profile(name: str) -> MaterialProfile:
 
 def list_profiles() -> list[str]:
     return list(_BUILTINS.keys())
+
+
+def save_custom_profile(profile: MaterialProfile, config_dir: Path) -> Path:
+    """Save a custom profile to the config directory."""
+    profiles_dir = config_dir / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    path = profiles_dir / f"{profile.name}.json"
+    profile.save(path)
+    return path
+
+
+def load_custom_profiles(config_dir: Path) -> dict[str, MaterialProfile]:
+    """Load all custom profiles from the config directory."""
+    profiles_dir = config_dir / "profiles"
+    custom: dict[str, MaterialProfile] = {}
+    if profiles_dir.exists():
+        for f in profiles_dir.glob("*.json"):
+            try:
+                p = MaterialProfile.load(f)
+                custom[p.name] = p
+            except Exception:
+                continue
+    return custom
+
+
+def get_all_profiles(config_dir: Path | None = None) -> dict[str, MaterialProfile]:
+    """Get all profiles (built-in + custom)."""
+    profiles = dict(_BUILTINS)
+    if config_dir:
+        profiles.update(load_custom_profiles(config_dir))
+    return profiles
