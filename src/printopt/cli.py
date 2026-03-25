@@ -111,6 +111,30 @@ async def do_run(
         print("printopt stopped")
 
 
+def do_vibration(args: argparse.Namespace) -> None:
+    """Handle vibration subcommands."""
+    sub = getattr(args, "vib_command", None)
+    if sub is None:
+        print("Usage: printopt vibration {analyze,report,apply}")
+        sys.exit(1)
+
+    if sub == "analyze":
+        print("Starting vibration analysis...")
+        print("(Requires a live printer connection with ADXL345 attached)")
+        return
+
+    if sub == "report":
+        print("Vibration report (not yet implemented)")
+        return
+
+    if sub == "apply":
+        print("Apply shaper config (not yet implemented)")
+        return
+
+    print(f"printopt vibration: unknown subcommand '{sub}'")
+    sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="printopt",
@@ -156,6 +180,10 @@ def main() -> None:
             port=args.port,
             profile=args.profile,
         ))
+        return
+
+    if args.command == "vibration":
+        do_vibration(args)
         return
 
     print(f"printopt: {args.command} (not yet implemented)")
