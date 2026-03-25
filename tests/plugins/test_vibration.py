@@ -9,6 +9,7 @@ from printopt.plugins.vibration.analysis import (
     find_resonance_peaks,
     evaluate_shapers,
     ShaperResult,
+    ResonancePeak,
 )
 
 
@@ -93,3 +94,34 @@ class TestFFTAnalysis:
         # Should have a shaper type and frequency
         assert results[0].shaper_type in ("zv", "mzv", "ei", "2hump_ei", "3hump_ei")
         assert results[0].frequency > 0
+
+
+class TestVibrationPluginResults:
+    @pytest.mark.asyncio
+    async def test_store_and_retrieve_results(self, tmp_path):
+        plugin = VibrationPlugin()
+        plugin._results_path = tmp_path / "results.json"
+
+        peaks = [ResonancePeak(frequency=45.0, amplitude=0.5, prominence=0.3)]
+        shapers = [ShaperResult(shaper_type="ei", frequency=45.0, remaining_vibration=0.01, max_accel_loss=0.1)]
+
+        plugin.store_results("x", peaks, shapers, [1.0, 2.0], [0.1, 0.2])
+
+        assert "x" in plugin.results
+        assert plugin.results["x"]["best"]["shaper_type"] == "ei"
+        assert (tmp_path / "results.json").exists()
+
+    def test_dashboard_data_with_results(self):
+        plugin = VibrationPlugin()
+        plugin.results = {
+            "x": {
+                "peaks": [{"frequency": 45.0, "amplitude": 0.5, "prominence": 0.3}],
+                "best": {"shaper_type": "ei", "frequency": 45.0},
+                "shapers": [],
+                "psd_freqs": [1.0, 2.0],
+                "psd_values": [0.1, 0.2],
+            }
+        }
+        data = plugin.get_dashboard_data()
+        assert "x" in data["results"]
+        assert data["results"]["x"]["best"]["shaper_type"] == "ei"
