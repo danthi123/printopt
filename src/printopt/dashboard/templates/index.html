@@ -19,11 +19,32 @@
             <div id="plugin-list"></div>
         </aside>
         <main id="main-panel">
-            <p>Select a plugin to view its dashboard.</p>
+            <div id="plugin-tabs"></div>
+            <div id="panel-vibration" class="plugin-panel" style="display:none">
+                <h2>Vibration Analysis</h2>
+                <div id="vib-status">No analysis data. Run: printopt vibration analyze</div>
+                <canvas id="vib-canvas" width="800" height="400"></canvas>
+            </div>
+            <div id="panel-flow" class="plugin-panel" style="display:none">
+                <h2>Flow Compensation</h2>
+                <div id="flow-stats"></div>
+                <div id="flow-timeline"></div>
+                <div id="flow-log"></div>
+            </div>
+            <div id="panel-thermal" class="plugin-panel" style="display:none">
+                <h2>Thermal Simulation</h2>
+                <div id="thermal-stats"></div>
+                <canvas id="thermal-canvas" width="500" height="500"></canvas>
+                <div id="thermal-warnings"></div>
+            </div>
+            <div id="panel-none" class="plugin-panel">
+                <p>Select a plugin from the sidebar to view its dashboard.</p>
+            </div>
         </main>
     </div>
     <footer>
         <button id="btn-kill">Kill All Compensation</button>
+        <button id="btn-reset">Reset Compensation</button>
     </footer>
     <script src="/static/main.js"></script>
 </body>

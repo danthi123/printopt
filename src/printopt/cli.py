@@ -16,6 +16,9 @@ from printopt.core.materials import (
 from printopt.core.moonraker import MoonrakerClient
 from printopt.core.plugin import PluginManager
 from printopt.core.printer import PrinterConfig, discover_printer
+from printopt.plugins.vibration.plugin import VibrationPlugin
+from printopt.plugins.flow.plugin import FlowPlugin
+from printopt.plugins.thermal.plugin import ThermalPlugin
 
 
 def get_config_dir() -> Path:
@@ -105,12 +108,20 @@ async def _poll_printer_status(client: MoonrakerClient, mgr: PluginManager) -> N
                 "print_duration": round(ps.get("print_duration", 0), 0),
             }
 
+            plugin_data = {}
+            for pname, plugin in mgr.plugins.items():
+                plugin_data[pname] = {
+                    "enabled": plugin.enabled,
+                    **plugin.get_dashboard_data(),
+                }
+
             state_update = {
                 "printer": {
                     "connected": True,
                     "host": client.host,
                     "status": printer_status,
                 },
+                "plugins": plugin_data,
             }
             await broadcast_state(state_update)
             await mgr.broadcast_status(printer_status)
@@ -146,7 +157,7 @@ async def do_run(
     # inside uvicorn's event loop (connections can't cross event loops)
     from printopt.dashboard.server import set_poll_callback, create_app
 
-    async def _startup_and_poll():
+    async def _startup_and_poll(plugins_str: str = "all"):
         own = _client is None
         if own:
             client = MoonrakerClient(config.host)
@@ -156,12 +167,27 @@ async def do_run(
             client = _client
 
         mgr = PluginManager()
+
+        plugin_map = {
+            "vibration": VibrationPlugin,
+            "flow": FlowPlugin,
+            "thermal": ThermalPlugin,
+        }
+        if plugins_str == "all":
+            active = list(plugin_map.keys())
+        else:
+            active = [p.strip() for p in plugins_str.split(",")]
+
+        for name in active:
+            if name in plugin_map:
+                mgr.register(plugin_map[name]())
+
         await mgr.start_all()
         print(f"Plugin manager started ({len(mgr.plugins)} plugins)")
 
         await _poll_printer_status(client, mgr)
 
-    set_poll_callback(_startup_and_poll)
+    set_poll_callback(lambda: _startup_and_poll(plugins))
 
     # Start dashboard
     print(f"Dashboard at http://localhost:{port}")

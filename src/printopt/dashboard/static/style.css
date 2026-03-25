@@ -5,10 +5,23 @@ header h1 { font-size: 18px; }
 #connection-status { font-size: 12px; padding: 4px 8px; border-radius: 4px; background: #c0392b; }
 #connection-status.connected { background: #27ae60; }
 #layout { display: flex; height: calc(100vh - 100px); }
-#sidebar { width: 260px; padding: 16px; background: #0f3460; overflow-y: auto; }
+#sidebar { width: 260px; padding: 16px; background: #0f3460; overflow-y: auto; flex-shrink: 0; }
 #sidebar h3 { margin: 12px 0 6px; font-size: 13px; text-transform: uppercase; color: #888; }
 #printer-status, #plugin-list { font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; white-space: pre; line-height: 1.5; color: #ccc; }
+#plugin-list { cursor: pointer; }
+#plugin-list .plugin-item { padding: 4px 8px; border-radius: 4px; margin: 2px 0; }
+#plugin-list .plugin-item:hover { background: #16213e; }
+#plugin-list .plugin-item.active { background: #1a3a6e; }
 #main-panel { flex: 1; padding: 20px; overflow-y: auto; }
+.plugin-panel h2 { margin-bottom: 16px; font-size: 16px; color: #e0e0e0; }
+.plugin-panel { font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; }
+#flow-stats, #thermal-stats { margin-bottom: 12px; line-height: 1.6; }
+#flow-timeline { background: #0f3460; padding: 12px; border-radius: 6px; margin-bottom: 12px; min-height: 60px; white-space: pre; }
+#flow-log { background: #0a0a1a; padding: 12px; border-radius: 6px; max-height: 300px; overflow-y: auto; white-space: pre; font-size: 12px; color: #888; }
+#thermal-warnings { margin-top: 12px; color: #e67e22; white-space: pre; }
+canvas { background: #0a0a1a; border-radius: 6px; display: block; margin: 8px 0; }
 footer { padding: 10px 20px; background: #16213e; text-align: center; }
-#btn-kill { background: #c0392b; color: white; border: none; padding: 8px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
-#btn-kill:hover { background: #e74c3c; }
+footer button { background: #c0392b; color: white; border: none; padding: 8px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; margin: 0 8px; }
+footer button:hover { background: #e74c3c; }
+#btn-reset { background: #2c3e50; }
+#btn-reset:hover { background: #34495e; }
