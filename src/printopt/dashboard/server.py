@@ -22,6 +22,7 @@ _poll_task = None
 
 _kill_all = False
 _reset_all = False
+_pending_actions: list[dict] = []
 
 
 def set_poll_callback(callback) -> None:
@@ -77,6 +78,8 @@ def create_app() -> FastAPI:
                         _kill_all = True
                     elif action == "reset":
                         _reset_all = True
+                    elif action:
+                        _pending_actions.append(msg)
                 except (json.JSONDecodeError, AttributeError):
                     pass
         except WebSocketDisconnect:
@@ -99,6 +102,13 @@ def get_and_clear_reset() -> bool:
         _reset_all = False
         return True
     return False
+
+
+def get_pending_actions() -> list[dict]:
+    """Return and clear all pending actions from the dashboard."""
+    actions = list(_pending_actions)
+    _pending_actions.clear()
+    return actions
 
 
 async def broadcast_state(state: dict) -> None:

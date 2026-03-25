@@ -181,13 +181,76 @@ async def _poll_printer_status(client: MoonrakerClient, mgr: PluginManager) -> N
 
         if get_and_clear_reset():
             logger.info("Reset compensation requested from dashboard")
-            # Just re-enable plugins
             for plugin in mgr.plugins.values():
                 plugin.enabled = True
                 if hasattr(plugin, '_kill'):
                     plugin._kill = False
 
+        # Handle plugin-specific actions from the dashboard
+        from printopt.dashboard.server import get_pending_actions
+        for action_msg in get_pending_actions():
+            action = action_msg.get("action", "")
+            if action == "run_vibration":
+                logger.info("Vibration analysis triggered from dashboard")
+                asyncio.create_task(_dashboard_vibration_analyze(client, mgr))
+            elif action == "enable_flow":
+                flow = mgr.plugins.get("flow")
+                if flow:
+                    flow.enabled = True
+                    if hasattr(flow, '_kill'):
+                        flow._kill = False
+                    logger.info("Flow compensation enabled from dashboard")
+            elif action == "disable_flow":
+                flow = mgr.plugins.get("flow")
+                if flow and hasattr(flow, 'kill'):
+                    flow.kill()
+                    logger.info("Flow compensation disabled from dashboard")
+            elif action == "enable_thermal":
+                thermal = mgr.plugins.get("thermal")
+                if thermal:
+                    thermal.enabled = True
+                    logger.info("Thermal simulation enabled from dashboard")
+            elif action == "disable_thermal":
+                thermal = mgr.plugins.get("thermal")
+                if thermal:
+                    thermal.enabled = False
+                    logger.info("Thermal simulation disabled from dashboard")
+
         await asyncio.sleep(1.0)
+
+
+async def _dashboard_vibration_analyze(client: MoonrakerClient, mgr: PluginManager) -> None:
+    """Run vibration analysis triggered from the dashboard."""
+    import logging
+    logger = logging.getLogger(__name__)
+    from printopt.dashboard.server import broadcast_state
+
+    vib_plugin = mgr.plugins.get("vibration")
+    if not vib_plugin:
+        return
+
+    try:
+        from printopt.plugins.vibration.capture import run_vibration_test
+        from printopt.plugins.vibration.analysis import compute_psd, find_resonance_peaks, evaluate_shapers
+        import numpy as np
+
+        for axis in ("x", "y"):
+            # Broadcast status update
+            await broadcast_state({"vibration_status": f"Running {axis.upper()} axis test..."})
+            logger.info("Running vibration test: %s axis", axis)
+
+            await run_vibration_test(client, axis=axis)
+
+            # For now, use Klipper's built-in results
+            # Full implementation would parse /tmp/resonances_*.csv
+            logger.info("Vibration test complete for %s axis", axis)
+
+        await broadcast_state({"vibration_status": "Analysis complete"})
+        logger.info("Vibration analysis complete from dashboard")
+
+    except Exception as e:
+        logger.error("Dashboard vibration analysis error: %s", e)
+        await broadcast_state({"vibration_status": f"Error: {e}"})
 
 
 async def do_run(
