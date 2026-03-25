@@ -20,6 +20,9 @@ _ws_clients: list[WebSocket] = []
 _poll_callback = None  # Set by do_run before starting the app
 _poll_task = None
 
+_kill_all = False
+_reset_all = False
+
 
 def set_poll_callback(callback) -> None:
     """Register the status polling coroutine to run on startup."""
@@ -61,15 +64,41 @@ def create_app() -> FastAPI:
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
+        global _kill_all, _reset_all
         await ws.accept()
         _ws_clients.append(ws)
         try:
             while True:
-                await ws.receive_text()
+                raw = await ws.receive_text()
+                try:
+                    msg = json.loads(raw)
+                    action = msg.get("action")
+                    if action == "kill_all":
+                        _kill_all = True
+                    elif action == "reset":
+                        _reset_all = True
+                except (json.JSONDecodeError, AttributeError):
+                    pass
         except WebSocketDisconnect:
             _ws_clients.remove(ws)
 
     return app
+
+
+def get_and_clear_kill() -> bool:
+    global _kill_all
+    if _kill_all:
+        _kill_all = False
+        return True
+    return False
+
+
+def get_and_clear_reset() -> bool:
+    global _reset_all
+    if _reset_all:
+        _reset_all = False
+        return True
+    return False
 
 
 async def broadcast_state(state: dict) -> None:

@@ -134,6 +134,29 @@ async def _poll_printer_status(client: MoonrakerClient, mgr: PluginManager) -> N
         except Exception as e:
             logger.warning("Status poll error: %s: %s", type(e).__name__, e)
 
+        # Check for kill/reset signals from the dashboard
+        from printopt.dashboard.server import get_and_clear_kill, get_and_clear_reset
+
+        if get_and_clear_kill():
+            logger.warning("Kill all compensation requested from dashboard")
+            for plugin in mgr.plugins.values():
+                if hasattr(plugin, 'kill'):
+                    plugin.kill()
+            # Reset speed/flow/PA to defaults
+            try:
+                await client.inject("M220 S100")  # reset speed
+                await client.inject("M221 S100")  # reset flow
+            except Exception:
+                pass
+
+        if get_and_clear_reset():
+            logger.info("Reset compensation requested from dashboard")
+            # Just re-enable plugins
+            for plugin in mgr.plugins.values():
+                plugin.enabled = True
+                if hasattr(plugin, '_kill'):
+                    plugin._kill = False
+
         await asyncio.sleep(1.0)
 
 
