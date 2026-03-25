@@ -79,6 +79,8 @@ def create_app() -> FastAPI:
                     elif action == "reset":
                         _reset_all = True
                     elif action:
+                        import logging
+                        logging.getLogger(__name__).info("WS action received: %s", action)
                         _pending_actions.append(msg)
                 except (json.JSONDecodeError, AttributeError):
                     pass
@@ -106,6 +108,9 @@ def get_and_clear_reset() -> bool:
 
 def get_pending_actions() -> list[dict]:
     """Return and clear all pending actions from the dashboard."""
+    if _pending_actions:
+        import logging
+        logging.getLogger(__name__).info("Pending actions: %s", _pending_actions)
     actions = list(_pending_actions)
     _pending_actions.clear()
     return actions

@@ -163,6 +163,8 @@ async def _poll_printer_status(client: MoonrakerClient, mgr: PluginManager) -> N
 
         except Exception as e:
             logger.warning("Status poll error: %s: %s", type(e).__name__, e)
+            if not client.connected:
+                await client._reconnect()
 
         # Check for kill/reset signals from the dashboard
         from printopt.dashboard.server import get_and_clear_kill, get_and_clear_reset
