@@ -43,6 +43,23 @@ class TestFlowPlugin:
         assert "total_adjustments" in data
         assert "active_compensations" in data
 
+    @pytest.mark.asyncio
+    async def test_status_update_tracks_state(self):
+        plugin = FlowPlugin()
+        await plugin.on_status_update({"state": "printing", "progress": 25.0, "filename": "test.gcode"})
+        assert plugin._print_state == "printing"
+        assert plugin._current_progress == 25.0
+
+    @pytest.mark.asyncio
+    async def test_dashboard_data_during_print(self):
+        plugin = FlowPlugin()
+        gcode = "G1 Z0.2 F3000\nG1 X10 Y10 E0.5 F1500\nG1 X50 Y10 E2.0\nG1 X50 Y50 E4.0"
+        await plugin.on_print_start("test.gcode", gcode)
+        data = plugin.get_dashboard_data()
+        assert data["filename"] == "test.gcode"
+        assert "log" in data
+        assert "state" in data
+
 
 class TestFlowCompensator:
     def test_corner_compensation(self):
