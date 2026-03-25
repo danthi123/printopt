@@ -253,6 +253,25 @@ def parse_accel_csv(csv_text: str, axis: str = "x") -> AccelData:
     return AccelData(axis=axis)
 
 
+async def apply_custom_shaper(
+    client: MoonrakerClient,
+    axis: str,
+    A: list[float],
+    T: list[float],
+) -> None:
+    """Apply custom shaper coefficients to the printer."""
+    a_str = ",".join(f"{a:.6f}" for a in A)
+    t_str = ",".join(f"{t:.6f}" for t in T)
+    axis = axis.upper()
+    logger.info("Applying custom shaper for %s: %d pulses", axis, len(A))
+    await client.inject(
+        f"SET_INPUT_SHAPER "
+        f"SHAPER_TYPE_{axis}=custom "
+        f"SHAPER_A_{axis}={a_str} "
+        f"SHAPER_T_{axis}={t_str}"
+    )
+
+
 async def apply_shaper_config(
     client: MoonrakerClient,
     shaper_type_x: str,

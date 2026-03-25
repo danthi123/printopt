@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -342,3 +343,121 @@ def analyze_raw_data(
                 shapers[0].frequency if shapers else 0)
 
     return freqs, psd, peaks, shapers
+
+
+def design_custom_shaper(
+    freqs: np.ndarray,
+    psd: np.ndarray,
+    peaks: list[ResonancePeak],
+    max_pulses: int = 12,
+    damping_ratio: float = 0.1,
+) -> tuple[list[float], list[float], float]:
+    """Design a custom multi-notch input shaper targeting specific resonance peaks.
+
+    Uses cascaded ZV-style pulse pairs to create notches at each detected
+    resonance frequency, then convolves all pairs together to get a combined
+    shaper that notches all peaks simultaneously.
+
+    Args:
+        freqs: Frequency array from PSD.
+        psd: PSD values.
+        peaks: Detected resonance peaks (sorted by amplitude).
+        max_pulses: Maximum number of pulses (Klipper C limit).
+        damping_ratio: Assumed damping ratio.
+
+    Returns:
+        (A, T, remaining_vibration) tuple.
+        A = list of amplitudes, T = list of time delays.
+    """
+    if not peaks:
+        return [], [], 1.0
+
+    # Start with the strongest peaks, up to what our pulse budget allows.
+    # Each ZV pair uses 2 pulses. Convolving N pairs gives up to 2^N pulses.
+    # With 12 pulse max, we can target up to 3 peaks via cascaded ZV.
+    target_peaks = peaks[:min(3, len(peaks))]
+
+    df = math.sqrt(1.0 - damping_ratio**2)
+
+    # Design individual ZV shapers for each peak frequency
+    shapers = []
+    for peak in target_peaks:
+        K = math.exp(-damping_ratio * math.pi / df)
+        t_d = 1.0 / (peak.frequency * df)
+        A = [1.0, K]
+        T = [0.0, 0.5 * t_d]
+        shapers.append((A, T))
+
+    # Convolve all shapers together
+    result_A = shapers[0][0]
+    result_T = shapers[0][1]
+
+    for i in range(1, len(shapers)):
+        new_A: list[float] = []
+        new_T: list[float] = []
+        for ai, ti in zip(result_A, result_T):
+            for aj, tj in zip(shapers[i][0], shapers[i][1]):
+                new_A.append(ai * aj)
+                new_T.append(ti + tj)
+        result_A = new_A
+        result_T = new_T
+
+    # If too many pulses, merge nearby ones
+    while len(result_A) > max_pulses:
+        # Find the two closest pulses by time and merge them
+        min_dt = float('inf')
+        merge_idx = 0
+        sorted_indices = sorted(range(len(result_T)), key=lambda k: result_T[k])
+        for k in range(len(sorted_indices) - 1):
+            dt = result_T[sorted_indices[k + 1]] - result_T[sorted_indices[k]]
+            if dt < min_dt:
+                min_dt = dt
+                merge_idx = k
+        i1 = sorted_indices[merge_idx]
+        i2 = sorted_indices[merge_idx + 1]
+        # Weighted average
+        total_a = result_A[i1] + result_A[i2]
+        if total_a > 0:
+            merged_t = (
+                result_A[i1] * result_T[i1] + result_A[i2] * result_T[i2]
+            ) / total_a
+        else:
+            merged_t = (result_T[i1] + result_T[i2]) / 2
+        # Replace i1 with merged, remove i2
+        result_A[i1] = total_a
+        result_T[i1] = merged_t
+        # Remove the higher index first to preserve lower index
+        hi, lo = max(i1, i2), min(i1, i2)
+        del result_A[hi]
+        del result_T[hi]
+
+    # Normalize amplitudes
+    total = sum(result_A)
+    if total > 0:
+        result_A = [a / total for a in result_A]
+
+    # Sort by time
+    pairs = sorted(zip(result_T, result_A))
+    result_T = [t for t, a in pairs]
+    result_A = [a for t, a in pairs]
+
+    # Shift so first pulse is at t=0
+    t_min = result_T[0]
+    result_T = [t - t_min for t in result_T]
+
+    # Compute remaining vibration
+    total_vibration = float(np.trapz(psd, freqs))
+    if total_vibration > 0:
+        w = 2.0 * np.pi * freqs
+        real = np.zeros_like(freqs)
+        imag = np.zeros_like(freqs)
+        for a, t in zip(result_A, result_T):
+            real += a * np.cos(w * t)
+            imag += a * np.sin(w * t)
+        response = np.sqrt(real**2 + imag**2)
+        filtered = psd * response**2
+        remaining = float(np.trapz(filtered, freqs)) / total_vibration
+    else:
+        remaining = 1.0
+
+    return result_A, result_T, remaining

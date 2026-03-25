@@ -246,6 +246,8 @@ async def _dashboard_vibration_analyze(client: MoonrakerClient, mgr: PluginManag
             find_resonance_peaks,
             evaluate_shapers,
             analyze_raw_data,
+            design_custom_shaper,
+            ShaperResult,
         )
         import csv as csv_mod
         import io
@@ -266,7 +268,29 @@ async def _dashboard_vibration_analyze(client: MoonrakerClient, mgr: PluginManag
                 logger.info("Using raw ADXL345 data for %s axis (high-resolution)", axis)
                 freqs, psd, peaks, shapers = analyze_raw_data(raw_csv, axis=axis)
                 if len(freqs) > 0:
-                    vib_plugin.store_results(axis, peaks, shapers, freqs.tolist(), psd.tolist())
+                    # Design custom multi-notch shaper and compare
+                    custom_A, custom_T, custom_remaining = design_custom_shaper(
+                        freqs, psd, peaks
+                    )
+                    if custom_A and shapers and custom_remaining < shapers[0].remaining_vibration:
+                        logger.info(
+                            "%s axis: custom shaper (%d pulses) beats best preset: "
+                            "%.4f vs %.4f remaining vibration",
+                            axis.upper(), len(custom_A),
+                            custom_remaining, shapers[0].remaining_vibration,
+                        )
+                        custom_result = ShaperResult(
+                            shaper_type="custom",
+                            frequency=0.0,
+                            remaining_vibration=round(custom_remaining, 6),
+                            max_accel_loss=0.0,
+                        )
+                        shapers.insert(0, custom_result)
+                    vib_plugin.store_results(
+                        axis, peaks, shapers, freqs.tolist(), psd.tolist(),
+                        custom_a=custom_A if custom_A else None,
+                        custom_t=custom_T if custom_A else None,
+                    )
                     best = shapers[0] if shapers else None
                     logger.info(
                         "%s axis (raw): %d freq bins, %d peaks, best: %s @ %.1f Hz",
@@ -313,8 +337,31 @@ async def _dashboard_vibration_analyze(client: MoonrakerClient, mgr: PluginManag
             peaks = find_resonance_peaks(freqs, psd)
             shapers = evaluate_shapers(freqs, psd)
 
+            # Design custom multi-notch shaper and compare
+            custom_A, custom_T, custom_remaining = design_custom_shaper(
+                freqs, psd, peaks
+            )
+            if custom_A and shapers and custom_remaining < shapers[0].remaining_vibration:
+                logger.info(
+                    "%s axis: custom shaper (%d pulses) beats best preset: "
+                    "%.4f vs %.4f remaining vibration",
+                    axis.upper(), len(custom_A),
+                    custom_remaining, shapers[0].remaining_vibration,
+                )
+                custom_result = ShaperResult(
+                    shaper_type="custom",
+                    frequency=0.0,
+                    remaining_vibration=round(custom_remaining, 6),
+                    max_accel_loss=0.0,
+                )
+                shapers.insert(0, custom_result)
+
             # Store results in the plugin
-            vib_plugin.store_results(axis, peaks, shapers, freqs.tolist(), psd.tolist())
+            vib_plugin.store_results(
+                axis, peaks, shapers, freqs.tolist(), psd.tolist(),
+                custom_a=custom_A if custom_A else None,
+                custom_t=custom_T if custom_A else None,
+            )
 
             best = shapers[0] if shapers else None
             logger.info(

@@ -48,6 +48,8 @@ class VibrationPlugin(Plugin):
         shapers: list[ShaperResult],
         freqs: list[float],
         psd: list[float],
+        custom_a: list[float] | None = None,
+        custom_t: list[float] | None = None,
     ) -> None:
         """Store analysis results for dashboard and persistence."""
         self.results[axis] = {
@@ -71,6 +73,10 @@ class VibrationPlugin(Plugin):
             "psd_freqs": [round(f, 1) for f in freqs[::4]],  # downsample for dashboard
             "psd_values": [round(float(v), 6) for v in psd[::4]],
         }
+        # Store custom shaper coefficients if present
+        if custom_a and custom_t:
+            self.results[axis]["custom_a"] = [round(a, 6) for a in custom_a]
+            self.results[axis]["custom_t"] = [round(t, 6) for t in custom_t]
 
         # Save to disk
         if self._results_path:

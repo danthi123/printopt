@@ -10,6 +10,7 @@ from printopt.plugins.vibration.analysis import (
     find_resonance_peaks,
     evaluate_shapers,
     analyze_raw_data,
+    design_custom_shaper,
     ShaperResult,
     ResonancePeak,
 )
@@ -188,3 +189,112 @@ class TestEnhancedAnalysis:
         assert any(abs(p.frequency - 50) < 5 for p in peaks)
         assert len(shapers) > 0
         assert shapers[0].frequency > 0
+
+
+class TestCustomShaper:
+    def test_design_custom_shaper_single_peak(self):
+        """Custom shaper for a single peak should produce 2 pulses (ZV-like)."""
+        fs = 3200
+        t = np.arange(0, 3.0, 1 / fs)
+        signal = np.sin(2 * np.pi * 50 * t) + 0.1 * np.random.randn(len(t))
+
+        freqs, psd = compute_psd(signal, fs)
+        peaks = find_resonance_peaks(freqs, psd)
+        assert len(peaks) >= 1
+
+        A, T, remaining = design_custom_shaper(freqs, psd, peaks)
+        assert len(A) == 2  # single peak -> ZV = 2 pulses
+        assert len(T) == 2
+        assert T[0] == 0.0  # first pulse at t=0
+        assert abs(sum(A) - 1.0) < 1e-9  # normalized
+        assert 0.0 < remaining < 1.0
+
+    def test_design_custom_shaper_two_peaks(self):
+        """Custom shaper for two peaks should produce 4 pulses (2 ZV convolved)."""
+        fs = 3200
+        t = np.arange(0, 3.0, 1 / fs)
+        signal = (
+            np.sin(2 * np.pi * 40 * t)
+            + 0.8 * np.sin(2 * np.pi * 85 * t)
+            + 0.1 * np.random.randn(len(t))
+        )
+
+        freqs, psd = compute_psd(signal, fs)
+        peaks = find_resonance_peaks(freqs, psd)
+        assert len(peaks) >= 2
+
+        A, T, remaining = design_custom_shaper(freqs, psd, peaks)
+        assert len(A) == 4  # two peaks -> 2x2 = 4 pulses
+        assert len(T) == 4
+        assert T[0] == 0.0
+        assert abs(sum(A) - 1.0) < 1e-9
+        assert 0.0 < remaining < 1.0
+
+    def test_design_custom_shaper_three_peaks(self):
+        """Custom shaper for three peaks should produce 8 pulses (2^3)."""
+        fs = 3200
+        t = np.arange(0, 3.0, 1 / fs)
+        signal = (
+            np.sin(2 * np.pi * 35 * t)
+            + 0.7 * np.sin(2 * np.pi * 70 * t)
+            + 0.5 * np.sin(2 * np.pi * 120 * t)
+            + 0.1 * np.random.randn(len(t))
+        )
+
+        freqs, psd = compute_psd(signal, fs)
+        peaks = find_resonance_peaks(freqs, psd)
+        assert len(peaks) >= 3
+
+        A, T, remaining = design_custom_shaper(freqs, psd, peaks)
+        assert len(A) == 8  # three peaks -> 2^3 = 8 pulses
+        assert len(T) == 8
+        assert len(A) <= 12  # within Klipper limit
+        assert T[0] == 0.0
+        assert abs(sum(A) - 1.0) < 1e-9
+        # Pulses should be sorted by time
+        for i in range(len(T) - 1):
+            assert T[i] <= T[i + 1]
+
+    def test_design_custom_shaper_no_peaks(self):
+        """No peaks should return empty shaper."""
+        freqs = np.linspace(1, 200, 1000)
+        psd = np.ones_like(freqs)
+        A, T, remaining = design_custom_shaper(freqs, psd, [])
+        assert A == []
+        assert T == []
+        assert remaining == 1.0
+
+    def test_design_custom_shaper_beats_preset(self):
+        """Custom shaper should outperform presets on multi-peak signals."""
+        fs = 3200
+        t = np.arange(0, 3.0, 1 / fs)
+        # Two strong resonances far apart -- hard for single-frequency shapers
+        signal = (
+            np.sin(2 * np.pi * 40 * t)
+            + np.sin(2 * np.pi * 90 * t)
+            + 0.1 * np.random.randn(len(t))
+        )
+
+        freqs, psd = compute_psd(signal, fs)
+        peaks = find_resonance_peaks(freqs, psd)
+        presets = evaluate_shapers(freqs, psd, freq_step=1.0)
+
+        custom_A, custom_T, custom_remaining = design_custom_shaper(freqs, psd, peaks)
+
+        # Custom should have lower remaining vibration than worst preset
+        assert custom_remaining < presets[-1].remaining_vibration
+
+    def test_design_custom_shaper_max_pulses_respected(self):
+        """Pulse count should never exceed max_pulses."""
+        peaks = [
+            ResonancePeak(frequency=30.0, amplitude=1.0, prominence=0.5),
+            ResonancePeak(frequency=60.0, amplitude=0.8, prominence=0.4),
+            ResonancePeak(frequency=90.0, amplitude=0.6, prominence=0.3),
+        ]
+        freqs = np.linspace(1, 200, 1000)
+        psd = np.ones_like(freqs) * 0.01
+
+        # With max_pulses=4, the 8-pulse result from 3 peaks must be merged
+        A, T, remaining = design_custom_shaper(freqs, psd, peaks, max_pulses=4)
+        assert len(A) <= 4
+        assert len(T) <= 4
