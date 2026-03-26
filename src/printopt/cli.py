@@ -230,6 +230,33 @@ async def _poll_printer_status(client: MoonrakerClient, mgr: PluginManager) -> N
                 if thermal:
                     thermal.enabled = False
                     logger.info("Thermal simulation disabled from dashboard")
+            elif action == "settings_changed":
+                settings = action_msg.get("settings", {})
+                logger.info("Settings changed from dashboard: %s", list(settings.keys()))
+
+                # Update flow compensator
+                flow = mgr.plugins.get("flow")
+                if flow:
+                    if "baseline_pa" in settings:
+                        flow.compensator.baseline_pa = float(settings["baseline_pa"])
+                    profile = flow.compensator.profile
+                    if "corner_boost" in settings:
+                        profile.corner_pa_boost = float(settings["corner_boost"])
+                    if "corner_threshold" in settings:
+                        profile.corner_angle_threshold = float(settings["corner_threshold"])
+                    if "bridge_flow" in settings:
+                        profile.bridge_flow = float(settings["bridge_flow"])
+                    if "bridge_fan" in settings:
+                        profile.bridge_fan = float(settings["bridge_fan"])
+                    if "thin_wall_speed" in settings:
+                        profile.thin_wall_speed = float(settings["thin_wall_speed"])
+                    if "small_perimeter_speed" in settings:
+                        profile.small_perimeter_speed = float(settings["small_perimeter_speed"])
+
+                # Update thermal plugin material
+                thermal = mgr.plugins.get("thermal")
+                if thermal and "material" in settings:
+                    thermal.material_name = settings["material"]
 
         await asyncio.sleep(1.0)
 

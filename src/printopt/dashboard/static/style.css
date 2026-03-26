@@ -25,6 +25,14 @@ header h1 { font-size: 18px; }
 .action-btn.action-off { background: #c0392b; }
 .action-btn.action-off:hover { background: #e74c3c; }
 .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.settings-section { background: #0f3460; padding: 12px; border-radius: 6px; }
+.settings-section h3 { font-size: 13px; text-transform: uppercase; color: #888; margin-bottom: 10px; }
+.setting-row { display: flex; align-items: center; margin: 6px 0; gap: 8px; }
+.setting-row label { font-size: 12px; color: #aaa; min-width: 140px; }
+.setting-row input, .setting-row select { background: #1a1a2e; border: 1px solid #2c3e50; color: #eee; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-family: inherit; width: 120px; }
+.setting-row input:focus, .setting-row select:focus { border-color: #3498db; outline: none; }
+.setting-row select { width: 130px; }
 canvas { background: #0a0a1a; border-radius: 6px; display: block; margin: 8px 0; }
 footer { padding: 10px 20px; background: #16213e; text-align: center; }
 footer button { background: #c0392b; color: white; border: none; padding: 8px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; margin: 0 8px; }

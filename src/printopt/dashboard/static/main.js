@@ -506,7 +506,65 @@ function doVibAnalyze(btn) {
     setTimeout(function() { btn.disabled = false; btn.textContent = 'Run Analysis'; }, 90000);
 }
 
+function loadSettings() {
+    fetch('/api/settings')
+        .then(function(r) { return r.json(); })
+        .then(function(settings) {
+            var fields = {
+                'setting-printer-ip': 'printer_ip',
+                'setting-printer-port': 'printer_port',
+                'setting-baseline-pa': 'baseline_pa',
+                'setting-corner-boost': 'corner_boost',
+                'setting-corner-threshold': 'corner_threshold',
+                'setting-bridge-flow': 'bridge_flow',
+                'setting-bridge-fan': 'bridge_fan',
+                'setting-thin-wall-speed': 'thin_wall_speed',
+                'setting-small-perim-speed': 'small_perimeter_speed',
+                'setting-material': 'material',
+                'setting-grid-resolution': 'grid_resolution',
+            };
+            Object.keys(fields).forEach(function(elemId) {
+                var el = document.getElementById(elemId);
+                var key = fields[elemId];
+                if (el && settings[key] !== undefined) {
+                    el.value = settings[key];
+                }
+            });
+        })
+        .catch(function(e) { console.log('Failed to load settings:', e); });
+}
+
+function saveSettings() {
+    var settings = {
+        printer_ip: document.getElementById('setting-printer-ip').value,
+        printer_port: parseInt(document.getElementById('setting-printer-port').value) || 7125,
+        baseline_pa: parseFloat(document.getElementById('setting-baseline-pa').value) || 0.04,
+        corner_boost: parseFloat(document.getElementById('setting-corner-boost').value) || 1.3,
+        corner_threshold: parseFloat(document.getElementById('setting-corner-threshold').value) || 60,
+        bridge_flow: parseFloat(document.getElementById('setting-bridge-flow').value) || 0.95,
+        bridge_fan: parseFloat(document.getElementById('setting-bridge-fan').value) || 70,
+        thin_wall_speed: parseFloat(document.getElementById('setting-thin-wall-speed').value) || 0.80,
+        small_perimeter_speed: parseFloat(document.getElementById('setting-small-perim-speed').value) || 0.70,
+        material: document.getElementById('setting-material').value,
+        grid_resolution: parseFloat(document.getElementById('setting-grid-resolution').value) || 1.0,
+    };
+
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(settings),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(result) {
+        var btn = document.getElementById('btn-save-settings');
+        btn.textContent = 'Saved!';
+        setTimeout(function() { btn.textContent = 'Save Settings'; }, 2000);
+    })
+    .catch(function(e) { console.log('Failed to save settings:', e); });
+}
+
 document.getElementById('btn-kill').addEventListener('click', killAll);
 document.getElementById('btn-reset').addEventListener('click', resetAll);
 // Plugin buttons use onclick handlers in HTML to avoid duplicate triggers
 connect();
+loadSettings();

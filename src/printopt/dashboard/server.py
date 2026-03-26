@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import Request
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -23,6 +24,19 @@ _poll_task = None
 _kill_all = False
 _reset_all = False
 _pending_actions: list[dict] = []
+_settings = {
+    "printer_ip": "",
+    "printer_port": 7125,
+    "baseline_pa": 0.04,
+    "corner_boost": 1.3,
+    "corner_threshold": 60.0,
+    "bridge_flow": 0.95,
+    "bridge_fan": 70.0,
+    "thin_wall_speed": 0.80,
+    "small_perimeter_speed": 0.70,
+    "material": "petg",
+    "grid_resolution": 1.0,
+}
 
 
 def set_poll_callback(callback) -> None:
@@ -33,6 +47,15 @@ def set_poll_callback(callback) -> None:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="printopt")
+
+    # Load saved settings from disk
+    settings_path = Path.home() / ".config" / "printopt" / "settings.json"
+    if settings_path.exists():
+        try:
+            saved = json.loads(settings_path.read_text())
+            _settings.update(saved)
+        except Exception:
+            pass
 
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -62,6 +85,22 @@ def create_app() -> FastAPI:
     @app.get("/api/status")
     async def api_status():
         return _state
+
+    @app.get("/api/settings")
+    async def get_settings():
+        return _settings
+
+    @app.post("/api/settings")
+    async def save_settings(request: Request):
+        body = await request.json()
+        _settings.update(body)
+        # Save to disk
+        settings_path = Path.home() / ".config" / "printopt" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(_settings, indent=2))
+        # Notify via pending actions so the poll loop picks up changes
+        _pending_actions.append({"action": "settings_changed", "settings": dict(_settings)})
+        return {"status": "ok"}
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
