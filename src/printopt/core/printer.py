@@ -36,7 +36,9 @@ class PrinterConfig:
         printer = cfg.get("printer", {})
         kinematics = printer.get("kinematics", "corexy")
         max_vel = float(printer.get("max_velocity", 300))
-        has_accel = "adxl345" in cfg
+        # Detect any supported Klipper accelerometer type
+        accel_chips = ("adxl345", "lis2dw", "mpu9250", "mpu6050", "mpu6500")
+        has_accel = any(chip in cfg for chip in accel_chips)
         shaper = cfg.get("input_shaper", {})
         shaper_x = (shaper.get("shaper_type_x", ""), float(shaper.get("shaper_freq_x", 0)))
         shaper_y = (shaper.get("shaper_type_y", ""), float(shaper.get("shaper_freq_y", 0)))

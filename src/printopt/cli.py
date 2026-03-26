@@ -530,6 +530,21 @@ async def do_run(
         if flow and thermal and hasattr(flow, '_thermal_plugin'):
             flow._thermal_plugin = thermal
 
+        # Auto-detect printer's configured pressure_advance
+        if flow:
+            try:
+                pa_result = await client.query(
+                    "printer.objects.query",
+                    {"objects": {"extruder": ["pressure_advance"]}},
+                )
+                pa_status = pa_result.get("status", {}).get("extruder", {})
+                printer_pa = pa_status.get("pressure_advance", 0)
+                if printer_pa and printer_pa > 0:
+                    flow.compensator.baseline_pa = float(printer_pa)
+                    logger.info("Auto-detected pressure_advance: %.4f", printer_pa)
+            except Exception:
+                pass  # Use default
+
         await mgr.start_all()
         print(f"Plugin manager started ({len(mgr.plugins)} plugins)")
 

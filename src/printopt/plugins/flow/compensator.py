@@ -27,25 +27,35 @@ class Compensation:
 
 @dataclass
 class CompensationProfile:
-    """Tunable compensation weights per filament type."""
-    # Pressure advance multiplier for corners (1.0 = no change)
-    corner_pa_boost: float = 1.3  # 30% boost
-    # PA boost angle threshold (degrees)
+    """Tunable compensation weights per filament type.
+
+    Defaults are conservative starting points suitable for most CoreXY
+    printers with direct-drive extruders printing PETG/PLA. Tune via
+    the web UI settings panel or calibration prints.
+
+    Derivation of defaults:
+    - corner_pa_boost 1.3: 30% PA increase reduces corner bulge on most
+      direct-drive setups. Higher values (1.5+) may help bowden.
+    - corner_angle_threshold 60°: below this, direction changes are
+      gradual enough that PA adjustment isn't needed.
+    - bridge_flow 0.95: 5% flow reduction is community consensus for
+      PETG/PLA to prevent bridge sagging. ABS may need 0.90.
+    - bridge_fan 70%: aggressive cooling for bridges. PLA can use 100%,
+      PETG 60-80%, ABS 0-30%.
+    - thin_wall_speed 0.80: 20% slowdown improves thin wall quality by
+      allowing more cooling time and reducing pressure fluctuations.
+    - small_perimeter_speed 0.70: 30% slowdown on perimeters <15mm
+      prevents heat accumulation on small features.
+    """
+    corner_pa_boost: float = 1.3
     corner_angle_threshold: float = 60.0
-    # Flow rate adjustment for bridges (fraction, e.g. 0.95 = 5% reduction)
     bridge_flow: float = 0.95
-    # Bridge fan speed (0-100)
     bridge_fan: float = 70.0
-    # Speed factor for thin walls (fraction)
     thin_wall_speed: float = 0.80
-    # Speed factor for small perimeters
     small_perimeter_speed: float = 0.70
-    # Maximum PA multiplier allowed
     max_pa_multiplier: float = 2.0
-    # Maximum flow adjustment (fraction from baseline)
-    max_flow_deviation: float = 0.15  # +-15%
-    # Maximum speed adjustment (fraction from baseline)
-    max_speed_deviation: float = 0.30  # +-30%
+    max_flow_deviation: float = 0.15
+    max_speed_deviation: float = 0.30
 
 
 DEFAULT_PROFILE = CompensationProfile()
