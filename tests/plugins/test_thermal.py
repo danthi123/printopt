@@ -234,7 +234,8 @@ class TestThermalPlugin:
         plugin._print_active = True
         # Create many hotspots above glass transition (78C)
         # Need to exceed hotspot_threshold (auto-calculated from bed area)
-        for i in range(20):
+        n_hotspots = plugin.grid.hotspot_threshold + 5
+        for i in range(n_hotspots):
             plugin.grid.grid[50 + i, 50 + i] = 100.0
         await plugin._apply_thermal_adjustments()
         assert plugin._speed_adjusted is True

@@ -321,12 +321,15 @@ function updateThermalPanel(data) {
     if (data.max_temp !== undefined) lines.push('Max temp: ' + data.max_temp.toFixed(1) + ' C');
     if (data.max_gradient !== undefined) lines.push('Max gradient: ' + data.max_gradient.toFixed(2) + ' C/mm');
     if (data.hotspot_count !== undefined) lines.push('Hotspots: ' + data.hotspot_count);
-    if (data.speed_adjusted) lines.push('Speed: REDUCED (85%)');
-    if (data.fan_adjusted) lines.push('Fan: BOOSTED (+20%)');
+    if (data.speed_adjusted) lines.push('Speed: REDUCED');
+    if (data.fan_adjusted) lines.push('Fan: BOOSTED');
     if (data.print_active) lines.push('Status: ACTIVE');
     statsEl.textContent = lines.join('\n');
 
-    if (data.heatmap) {
+    // Draw toolpath if available, otherwise fall back to heatmap grid
+    if (data.toolpath && data.toolpath.length > 0) {
+        drawToolpath(data.toolpath, data.bed_x || 245, data.bed_y || 245, data.nozzle_pos);
+    } else if (data.heatmap) {
         drawHeatmap(data.heatmap);
     }
 
@@ -362,13 +365,144 @@ function drawHeatmap(heatmapData) {
 }
 
 function tempToColor(temp) {
-    // Map temperature to color: blue (cold/ambient 25C) -> red (hot/200C)
+    // Blue (25C) -> Cyan (50C) -> Green (75C) -> Yellow (100C) -> Red (150C)
     var min = 25, max = 150;
     var ratio = Math.max(0, Math.min(1, (temp - min) / (max - min)));
-    var r = Math.floor(255 * ratio);
-    var b = Math.floor(255 * (1 - ratio));
-    var g = Math.floor(100 * (1 - Math.abs(ratio - 0.5) * 2));
+
+    var r, g, b;
+    if (ratio < 0.25) {
+        // Blue to Cyan
+        var t = ratio / 0.25;
+        r = 0; g = Math.floor(255 * t); b = 255;
+    } else if (ratio < 0.5) {
+        // Cyan to Green
+        var t = (ratio - 0.25) / 0.25;
+        r = 0; g = 255; b = Math.floor(255 * (1 - t));
+    } else if (ratio < 0.75) {
+        // Green to Yellow
+        var t = (ratio - 0.5) / 0.25;
+        r = Math.floor(255 * t); g = 255; b = 0;
+    } else {
+        // Yellow to Red
+        var t = (ratio - 0.75) / 0.25;
+        r = 255; g = Math.floor(255 * (1 - t)); b = 0;
+    }
     return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+function drawToolpath(segments, bedX, bedY, nozzlePos) {
+    var canvas = document.getElementById('thermal-canvas');
+    var ctx = canvas.getContext('2d');
+    var w = canvas.width;
+    var h = canvas.height;
+
+    // Margins for axes
+    var margin = { top: 30, right: 20, bottom: 40, left: 50 };
+    var plotW = w - margin.left - margin.right;
+    var plotH = h - margin.top - margin.bottom;
+
+    // Scale factors: bed coordinates to canvas pixels
+    var scaleX = plotW / bedX;
+    var scaleY = plotH / bedY;
+
+    // Clear canvas
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, w, h);
+
+    // Draw bed outline
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(margin.left, margin.top, plotW, plotH);
+
+    // Draw grid lines every 50mm
+    ctx.strokeStyle = '#1a1a2e';
+    ctx.lineWidth = 0.5;
+    for (var gx = 50; gx < bedX; gx += 50) {
+        var px = margin.left + gx * scaleX;
+        ctx.beginPath();
+        ctx.moveTo(px, margin.top);
+        ctx.lineTo(px, margin.top + plotH);
+        ctx.stroke();
+    }
+    for (var gy = 50; gy < bedY; gy += 50) {
+        var py = margin.top + gy * scaleY;
+        ctx.beginPath();
+        ctx.moveTo(margin.left, py);
+        ctx.lineTo(margin.left + plotW, py);
+        ctx.stroke();
+    }
+
+    // Axis labels
+    ctx.fillStyle = '#666';
+    ctx.font = '10px Consolas, Monaco, monospace';
+    ctx.textAlign = 'center';
+    for (var lx = 0; lx <= bedX; lx += 50) {
+        ctx.fillText(lx.toString(), margin.left + lx * scaleX, h - margin.bottom + 15);
+    }
+    ctx.textAlign = 'right';
+    for (var ly = 0; ly <= bedY; ly += 50) {
+        ctx.fillText(ly.toString(), margin.left - 5, margin.top + plotH - ly * scaleY + 4);
+    }
+
+    // Title
+    ctx.fillStyle = '#ccc';
+    ctx.font = '13px Consolas, Monaco, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Thermal Map — Toolpath Temperature', w / 2, 18);
+
+    // Draw toolpath segments colored by temperature
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+
+    for (var i = 0; i < segments.length; i++) {
+        var seg = segments[i];
+        var sx = margin.left + seg.x1 * scaleX;
+        var sy = margin.top + plotH - seg.y1 * scaleY;
+        var ex = margin.left + seg.x2 * scaleX;
+        var ey = margin.top + plotH - seg.y2 * scaleY;
+
+        ctx.strokeStyle = tempToColor(seg.temp);
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+    }
+
+    // Draw current nozzle position
+    if (nozzlePos) {
+        var nx = margin.left + nozzlePos.x * scaleX;
+        var ny = margin.top + plotH - nozzlePos.y * scaleY;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(nx, ny, 4, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+
+    // Draw temperature legend
+    var legendX = w - margin.right - 30;
+    var legendTop = margin.top + 10;
+    var legendH = 150;
+    var legendW = 15;
+
+    for (var li = 0; li < legendH; li++) {
+        var tempVal = 25 + (150 - 25) * (1 - li / legendH);
+        ctx.fillStyle = tempToColor(tempVal);
+        ctx.fillRect(legendX, legendTop + li, legendW, 2);
+    }
+    ctx.fillStyle = '#888';
+    ctx.font = '9px Consolas, Monaco, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('150C', legendX + legendW + 3, legendTop + 5);
+    ctx.fillText('88C', legendX + legendW + 3, legendTop + legendH / 2);
+    ctx.fillText('25C', legendX + legendW + 3, legendTop + legendH);
+
+    // Border around legend
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(legendX, legendTop, legendW, legendH);
 }
 
 function killAll() {

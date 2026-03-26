@@ -11,7 +11,7 @@ import numpy as np
 from printopt.core.gcode import GcodeParser, ParseResult
 from printopt.core.materials import MaterialProfile, get_profile
 from printopt.core.plugin import Plugin
-from printopt.plugins.thermal.grid import ThermalGrid, ThermalConfig
+from printopt.plugins.thermal.grid import ThermalGrid, ThermalConfig, GPU_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,8 @@ class ThermalPlugin(Plugin):
         self._current_speed_pct: int = 100
         self._last_injected_fan: int = -1
         self._last_injected_speed: int = -1
+        self._toolpath_segments: list[dict] = []  # recent segments for dashboard
+        self._max_dashboard_segments = 2000  # limit for websocket
 
     async def on_start(self) -> None:
         logger.info("Thermal simulation plugin started")
@@ -55,12 +57,14 @@ class ThermalPlugin(Plugin):
             specific_heat=mat.specific_heat,
             density=mat.density,
             glass_transition=mat.glass_transition,
+            resolution=0.5 if GPU_AVAILABLE else 1.0,
         )
         self.grid = ThermalGrid(config)
         parser = GcodeParser()
         self.parse_result = parser.parse(gcode)
         self.current_layer = 0
         self.warnings = []
+        self._toolpath_segments = []
         self._last_update = time.monotonic()
         self._print_active = True
         logger.info("Thermal simulation initialized for %s", self.material_name)
@@ -140,6 +144,31 @@ class ThermalPlugin(Plugin):
                 px = self._last_x + dx * frac
                 py = self._last_y + dy * frac
                 self.grid.deposit_heat(px, py, flow_rate, dt / steps)
+
+        # Record toolpath segment for dashboard visualization
+        if dist > 0.1 and self._nozzle_temp > 100 and self._print_active:
+            temp = 35.0  # default
+            if self.grid:
+                ix = int(new_x / self.grid.config.resolution)
+                iy = int(new_y / self.grid.config.resolution)
+                if 0 <= ix < self.grid.nx and 0 <= iy < self.grid.ny:
+                    if self.grid.xp is np:
+                        temp = float(self.grid.grid[iy, ix])
+                    else:
+                        temp = float(self.grid.xp.asnumpy(self.grid.grid[iy, ix]))
+
+            self._toolpath_segments.append({
+                "x1": round(self._last_x, 1),
+                "y1": round(self._last_y, 1),
+                "x2": round(new_x, 1),
+                "y2": round(new_y, 1),
+                "temp": round(temp, 1),
+                "layer": self.current_layer,
+            })
+
+            # Keep only recent segments for the dashboard
+            if len(self._toolpath_segments) > self._max_dashboard_segments:
+                self._toolpath_segments = self._toolpath_segments[-self._max_dashboard_segments:]
 
         self._last_e = new_e
 
@@ -307,8 +336,20 @@ class ThermalPlugin(Plugin):
         data["fan_boost"] = self._current_fan_boost
         data["speed_pct"] = self._current_speed_pct
         if self.grid:
-            data["max_temp"] = round(float(self.grid.grid.max()), 1)
+            grid_arr = self.grid.grid
+            if self.grid.xp is np:
+                max_val = float(grid_arr.max())
+            else:
+                max_val = float(self.grid.xp.asnumpy(grid_arr).max())
+            data["max_temp"] = round(max_val, 1)
             data["max_gradient"] = round(self.grid.get_max_gradient(), 2)
             data["hotspot_count"] = len(self.grid.get_hotspots())
-            data["heatmap"] = self._downsample_heatmap()
+            # Send toolpath segments instead of downsampled grid
+            data["toolpath"] = self._toolpath_segments[-1000:]
+            # Send bed dimensions for scaling
+            data["bed_x"] = self.grid.config.bed_x
+            data["bed_y"] = self.grid.config.bed_y
+            # Fallback heatmap for when toolpath is empty
+            if not self._toolpath_segments:
+                data["heatmap"] = self._downsample_heatmap()
         return data
