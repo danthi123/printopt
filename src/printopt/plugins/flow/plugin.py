@@ -72,6 +72,10 @@ class FlowPlugin(Plugin):
         )
 
     async def on_status_update(self, status: dict) -> None:
+        if self.total_adjustments == 0 and self.parse_result and self._print_state == "printing":
+            logger.info("FLOW_DEBUG: state=%s progress=%.1f kill=%s enabled=%s sched=%d",
+                        self._print_state, self._current_progress, self._kill, self.enabled,
+                        len(self._scheduled_lines))
         new_state = status.get("state", self._print_state)
         progress = status.get("progress", self._current_progress)
         filename = status.get("filename", "")

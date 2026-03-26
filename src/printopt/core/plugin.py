@@ -61,6 +61,8 @@ class PluginManager:
                     await plugin.on_status_update(status)
                 except Exception as e:
                     logger.error("Plugin '%s' error on status: %s", plugin.name, e)
+            else:
+                logger.debug("Plugin '%s' disabled, skipping status", plugin.name)
 
     async def broadcast_layer(self, layer: int, z: float) -> None:
         for plugin in self.plugins.values():
