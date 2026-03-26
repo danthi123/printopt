@@ -23,6 +23,68 @@ All optimization runs on your PC — no printer modifications needed beyond stan
 - Windows, Linux, or macOS
 - Optional: NVIDIA GPU with CUDA for accelerated thermal simulation
 
+## Compatibility
+
+### Stock Klipper (no modifications needed)
+
+These features work on any stock Klipper + Moonraker installation:
+
+| Feature | Stock Klipper | Notes |
+|---|---|---|
+| Flow compensation | Yes | Uses Moonraker HTTP API |
+| Thermal simulation | Yes | Uses Moonraker HTTP API |
+| Vibration analysis | Yes | Uses `TEST_RESONANCES` + SSH |
+| High-res FFT (398 bins) | Yes | Analysis runs on your PC |
+| 0.1Hz shaper sweep | Yes | Analysis runs on your PC |
+| Preset shaper recommendations | Yes | Recommends best of zv/mzv/ei/2hump_ei/3hump_ei |
+| Dashboard + live monitoring | Yes | Uses Moonraker HTTP API |
+| Settings panel | Yes | All browser-based |
+
+### Enhanced features (require Klipper fork)
+
+These features require the [printopt Klipper fork](https://github.com/danthi123/klipper/tree/q1-pro):
+
+| Feature | What it needs | Why |
+|---|---|---|
+| Custom multi-notch shapers | `custom` shaper type + 12-pulse support | Stock Klipper only supports 5 preset types with max 5 pulses |
+| Multi-position vibration testing | `TEST_RESONANCES POINT=x,y,z` parameter | Stock Klipper always tests at the config's `probe_points` |
+
+**Without the fork:** printopt still provides better vibration analysis than Klipper's built-in tools (higher resolution, finer sweep, multi-window PSD), but recommends the best preset shaper instead of a custom-optimized filter. The improvement over stock analysis is typically 10-30% better shaper selection. With the fork, custom shapers achieve 50-85% improvement.
+
+### Installing the Klipper fork (optional)
+
+If you want custom shaper support, you need to update three files in your Klipper installation:
+
+```bash
+# SSH into your printer
+ssh root@YOUR_PRINTER_IP
+
+# Back up originals
+cp /home/mks/klipper/klippy/chelper/kin_shaper.c /home/mks/klipper/klippy/chelper/kin_shaper.c.bak
+cp /home/mks/klipper/klippy/extras/input_shaper.py /home/mks/klipper/klippy/extras/input_shaper.py.bak
+cp /home/mks/klipper/klippy/extras/shaper_defs.py /home/mks/klipper/klippy/extras/shaper_defs.py.bak
+cp /home/mks/klipper/klippy/extras/resonance_tester.py /home/mks/klipper/klippy/extras/resonance_tester.py.bak
+
+# Download patched files from the fork
+cd /home/mks/klipper
+wget -O klippy/chelper/kin_shaper.c https://raw.githubusercontent.com/danthi123/klipper/q1-pro/klippy/chelper/kin_shaper.c
+wget -O klippy/extras/input_shaper.py https://raw.githubusercontent.com/danthi123/klipper/q1-pro/klippy/extras/input_shaper.py
+wget -O klippy/extras/shaper_defs.py https://raw.githubusercontent.com/danthi123/klipper/q1-pro/klippy/extras/shaper_defs.py
+wget -O klippy/extras/resonance_tester.py https://raw.githubusercontent.com/danthi123/klipper/q1-pro/klippy/extras/resonance_tester.py
+
+# Recompile C helper (kin_shaper.c changed)
+cd /home/mks/klipper/klippy/chelper
+rm -f c_helper.so
+/home/mks/klippy-env/bin/python -c "import sys; sys.path.insert(0,'..'); import chelper; chelper.get_ffi()"
+
+# Restart Klipper
+sudo systemctl restart klipper
+```
+
+To revert to stock: restore the `.bak` files, recompile c_helper.so, and restart Klipper.
+
+**Note:** The patched files are backwards compatible — all stock shaper types still work. The only additions are the `custom` type and the `POINT=` parameter. Your existing `[input_shaper]` config doesn't need to change.
+
 ## Install
 
 ### Quick install (pip)
