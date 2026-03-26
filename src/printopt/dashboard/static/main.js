@@ -374,8 +374,8 @@ function drawHeatmap(heatmapData) {
 }
 
 function tempToColor(temp) {
-    // Blue (25C) -> Cyan (50C) -> Green (75C) -> Yellow (100C) -> Red (150C)
-    var min = 25, max = 150;
+    // Blue (30C) -> Cyan (40C) -> Green (50C) -> Yellow (60C) -> Red (80C+)
+    var min = 30, max = 80;
     var ratio = Math.max(0, Math.min(1, (temp - min) / (max - min)));
 
     var r, g, b;
@@ -471,9 +471,8 @@ function drawToolpath(segments, bedX, bedY, nozzlePos) {
         var ey = margin.top + plotH - seg.y2 * scaleY;
 
         // Fade temperature toward ambient based on age
-        // Half-life of ~10 seconds — recently printed is hot, old paths are cool
         var age = seg.age || 0;
-        var decayFactor = Math.exp(-age / 15);  // exponential decay, ~15s half-life
+        var decayFactor = Math.exp(-age / 60);  // 60s decay — stays warm longer
         var effectiveTemp = 25 + (seg.temp - 25) * decayFactor;
         ctx.strokeStyle = tempToColor(effectiveTemp);
         ctx.beginPath();
@@ -509,9 +508,9 @@ function drawToolpath(segments, bedX, bedY, nozzlePos) {
     ctx.fillStyle = '#888';
     ctx.font = '9px Consolas, Monaco, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('150C', legendX + legendW + 3, legendTop + 5);
-    ctx.fillText('88C', legendX + legendW + 3, legendTop + legendH / 2);
-    ctx.fillText('25C', legendX + legendW + 3, legendTop + legendH);
+    ctx.fillText('80C+', legendX + legendW + 3, legendTop + 5);
+    ctx.fillText('55C', legendX + legendW + 3, legendTop + legendH / 2);
+    ctx.fillText('30C', legendX + legendW + 3, legendTop + legendH);
 
     // Border around legend
     ctx.strokeStyle = '#444';
