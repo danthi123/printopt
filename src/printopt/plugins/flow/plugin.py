@@ -72,10 +72,6 @@ class FlowPlugin(Plugin):
         )
 
     async def on_status_update(self, status: dict) -> None:
-        if self.total_adjustments == 0 and self.parse_result and self._print_state == "printing":
-            logger.info("FLOW_DEBUG: state=%s progress=%.1f kill=%s enabled=%s sched=%d",
-                        self._print_state, self._current_progress, self._kill, self.enabled,
-                        len(self._scheduled_lines))
         new_state = status.get("state", self._print_state)
         progress = status.get("progress", self._current_progress)
         filename = status.get("filename", "")
@@ -94,9 +90,6 @@ class FlowPlugin(Plugin):
         # During active printing, compute and apply compensations
         if self._print_state == "printing" and self.parse_result and not self._kill:
             await self._apply_compensations()
-        elif self.total_adjustments == 0 and self.parse_result:
-            logger.info("Flow NOT running: state=%s, parse=%s, kill=%s, progress=%.1f",
-                        self._print_state, bool(self.parse_result), self._kill, self._current_progress)
 
     async def _apply_compensations(self) -> None:
         # Kill switch restore: send reset commands if pending
@@ -111,21 +104,10 @@ class FlowPlugin(Plugin):
             except Exception:
                 pass
 
-        # Always apply thermal adjustments when thermal plugin is active
-        if self._thermal_plugin and self.parse_result:
-            try:
-                await self._apply_thermal_compensations()
-            except Exception as e:
-                logger.warning("Thermal comp error: %s", e)
-
-        if self._schedule_idx >= len(self._scheduled_lines):
-            if self.total_adjustments == 0 and len(self._scheduled_lines) > 0:
-                logger.warning("Schedule exhausted with 0 adjustments! idx=%d, len=%d",
-                               self._schedule_idx, len(self._scheduled_lines))
+        if not self.parse_result or not self._scheduled_lines:
             return
 
-        if not self.parse_result or not self._scheduled_lines:
-            logger.warning("No parse_result or empty schedule")
+        if self._schedule_idx >= len(self._scheduled_lines):
             return
 
         total_moves = len(self.parse_result.moves)
@@ -178,11 +160,10 @@ class FlowPlugin(Plugin):
 
             self._schedule_idx += 1
 
-        if skipped > 0 or self.total_adjustments == 0:
-            logger.info("Flow: progress=%.1f%%, move=%d/%d, line=%d, idx=%d/%d, lookahead=%d, skipped=%d, adj=%d",
-                        self._current_progress, current_move_idx, total_moves,
-                        current_line, self._schedule_idx, len(self._scheduled_lines),
-                        lookahead_lines, skipped, self.total_adjustments)
+        if skipped > 0:
+            logger.info("Flow: skipped %d, idx=%d/%d, progress=%.1f%%, adjustments=%d",
+                        skipped, self._schedule_idx, len(self._scheduled_lines),
+                        self._current_progress, self.total_adjustments)
 
         # Apply thermal adjustments if available
         if self._thermal_plugin:
