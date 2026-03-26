@@ -283,9 +283,13 @@ class ThermalPlugin(Plugin):
         if not self.parse_result or not self.grid:
             return
 
-        # Only rebuild when layer changes
-        if hasattr(self, '_last_rendered_layer') and self._last_rendered_layer == self.current_layer:
+        # Rebuild every 5 seconds or on layer change
+        now = time.monotonic()
+        last_rebuild = getattr(self, '_last_rebuild_time', 0)
+        last_layer = getattr(self, '_last_rendered_layer', -1)
+        if now - last_rebuild < 5.0 and last_layer == self.current_layer:
             return
+        self._last_rebuild_time = now
         self._last_rendered_layer = self.current_layer
 
         # Find moves for the last 3 layers
