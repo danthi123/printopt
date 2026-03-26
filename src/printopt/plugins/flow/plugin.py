@@ -33,6 +33,9 @@ class FlowPlugin(Plugin):
         self._log: list[dict] = []
         self._current_filename: str = ""
         self._compensated_lines: set[int] = set()
+        self._schedule: dict[int, list[Compensation]] = {}
+        self._scheduled_lines: list[int] = []
+        self._schedule_idx: int = 0
 
     async def on_start(self) -> None:
         logger.info("Flow compensation plugin started")
@@ -48,10 +51,22 @@ class FlowPlugin(Plugin):
         self._current_filename = filename
         self._log = []
         self._compensated_lines = set()
+
+        # Pre-compute all compensations indexed by line number
+        self._schedule = {}
+        all_comps = self.compensator.compute_compensations(
+            self.parse_result.features, current_time=0, lookahead_seconds=999999
+        )
+        for comp in all_comps:
+            self._schedule.setdefault(comp.line_number, []).append(comp)
+        self._scheduled_lines = sorted(self._schedule.keys())
+        self._schedule_idx = 0
+
         logger.info(
-            "Parsed %s: %d moves, %d features, %.1fs estimated",
+            "Parsed %s: %d moves, %d features, %.1fs estimated, %d compensations across %d lines",
             filename, len(self.parse_result.moves),
             len(self.parse_result.features), self.parse_result.total_time,
+            len(all_comps), len(self._scheduled_lines),
         )
 
     async def on_status_update(self, status: dict) -> None:
@@ -75,74 +90,130 @@ class FlowPlugin(Plugin):
             await self._apply_compensations()
 
     async def _apply_compensations(self) -> None:
-        if not self.parse_result or not self.parse_result.features:
+        if not self.parse_result or not self._scheduled_lines:
+            # Fall back: also apply thermal adjustments even without schedule
+            if self.parse_result and self._thermal_plugin:
+                await self._apply_thermal_compensations()
             return
 
-        # Map progress (0-100%) to approximate move index in the gcode.
-        # Moonraker progress is file-position-based (bytes), which is roughly
-        # proportional to line count, not time.
+        total_moves = len(self.parse_result.moves)
+        if total_moves == 0:
+            return
+
+        current_move_idx = int(self._current_progress / 100.0 * total_moves)
+        current_line = self.parse_result.moves[
+            min(current_move_idx, total_moves - 1)
+        ].line_number
+
+        # Inject all scheduled compensations up to current line + lookahead
+        lookahead_lines = 200
+
+        while self._schedule_idx < len(self._scheduled_lines):
+            sched_line = self._scheduled_lines[self._schedule_idx]
+            if sched_line > current_line + lookahead_lines:
+                break
+            if sched_line < current_line - 50:
+                # Already passed this line, skip
+                self._schedule_idx += 1
+                continue
+
+            comps = self._schedule[sched_line]
+            for comp in comps:
+                if comp.line_number in self._compensated_lines:
+                    continue
+                self._compensated_lines.add(comp.line_number)
+                if self._moonraker and not self._kill:
+                    try:
+                        await self._inject_with_retry(comp.value)
+                        self.total_adjustments += 1
+                        self._log_entry(comp)
+                    except Exception as e:
+                        logger.warning("Failed to inject: %s", e)
+
+            self._schedule_idx += 1
+
+        # Apply thermal adjustments if available
+        if self._thermal_plugin:
+            await self._apply_thermal_compensations()
+
+        # Update active compensations for dashboard
+        self.active_compensations = []
+        for i in range(
+            self._schedule_idx,
+            min(self._schedule_idx + 5, len(self._scheduled_lines)),
+        ):
+            line = self._scheduled_lines[i]
+            self.active_compensations.extend(self._schedule[line])
+
+        # Feedback loop: periodically verify actual speed/flow state
+        if (
+            self.total_adjustments > 0
+            and self.total_adjustments % 20 == 0
+            and self._moonraker
+        ):
+            try:
+                result = await self._moonraker.query(
+                    "printer.objects.query",
+                    {"objects": {"gcode_move": ["speed_factor", "extrude_factor"]}},
+                )
+                status = result.get("status", {}).get("gcode_move", {})
+                actual_speed = status.get("speed_factor", 1.0)
+                actual_flow = status.get("extrude_factor", 1.0)
+                logger.info(
+                    "Feedback: speed=%.0f%%, flow=%.0f%%",
+                    actual_speed * 100,
+                    actual_flow * 100,
+                )
+            except Exception:
+                pass
+
+    async def _apply_thermal_compensations(self) -> None:
+        """Apply thermal adjustments from the thermal plugin if available."""
+        if not self._thermal_plugin or not self._thermal_plugin.grid:
+            return
+        if not self.parse_result:
+            return
+
         total_moves = len(self.parse_result.moves)
         if total_moves == 0:
             return
 
         current_move_idx = int(self._current_progress / 100.0 * total_moves)
 
-        # Find the current line number from the move index
-        if current_move_idx < total_moves:
-            current_line = self.parse_result.moves[current_move_idx].line_number
-        else:
-            current_line = self.parse_result.moves[-1].line_number
+        from printopt.plugins.flow.thermal_bridge import ThermalFlowBridge
 
-        # Lookahead: find features within the next N lines
-        lookahead_lines = 500  # ~5 seconds of gcode at typical speeds
+        bridge = ThermalFlowBridge(
+            glass_transition=self._thermal_plugin.grid.config.glass_transition
+        )
+        heatmap = self._thermal_plugin.grid.get_heatmap()
+        resolution = self._thermal_plugin.grid.config.resolution
 
-        compensations = []
-        for feature in self.parse_result.features:
-            if feature.line_number < current_line:
-                continue
-            if feature.line_number > current_line + lookahead_lines:
-                break
-
-            comps = self.compensator._compensate_feature(feature)
-            compensations.extend(comps)
-
-        # Apply thermal adjustments if available
-        if self._thermal_plugin and self._thermal_plugin.grid:
-            from printopt.plugins.flow.thermal_bridge import ThermalFlowBridge
-            bridge = ThermalFlowBridge(
-                glass_transition=self._thermal_plugin.grid.config.glass_transition
-            )
-            heatmap = self._thermal_plugin.grid.get_heatmap()
-            resolution = self._thermal_plugin.grid.config.resolution
-
-            lookahead_moves = self.parse_result.moves[current_move_idx:current_move_idx+20]
-            for move in lookahead_moves:
-                if move.is_extrusion:
-                    tc = bridge.evaluate_position(heatmap, move.x, move.y, resolution)
-                    if tc.speed_factor != 1.0:
-                        compensations.append(Compensation(
-                            type="M220",
-                            value=f"M220 S{int(tc.speed_factor * 100)}",
-                            feature_type=FeatureType.LAYER_CHANGE,
-                            line_number=move.line_number,
-                            estimated_time=move.cumulative_time,
-                        ))
-                        break  # One thermal adjustment per cycle
-
-        self.active_compensations = compensations
-
-        # Inject compensations via Moonraker if available
-        if self._moonraker and compensations and not self._kill:
-            for comp in compensations:
-                if comp.line_number in self._compensated_lines:
-                    continue
-                self._compensated_lines.add(comp.line_number)
-                try:
-                    await self._inject_with_retry(comp.value)
-                    self.total_adjustments += 1
-                    self._log_entry(comp)
-                except Exception as e:
-                    logger.warning("Failed to inject compensation after retries: %s", e)
+        lookahead_moves = self.parse_result.moves[
+            current_move_idx : current_move_idx + 20
+        ]
+        for move in lookahead_moves:
+            if move.is_extrusion:
+                tc = bridge.evaluate_position(
+                    heatmap, move.x, move.y, resolution
+                )
+                if tc.speed_factor != 1.0:
+                    comp = Compensation(
+                        type="M220",
+                        value=f"M220 S{int(tc.speed_factor * 100)}",
+                        feature_type=FeatureType.LAYER_CHANGE,
+                        line_number=move.line_number,
+                        estimated_time=move.cumulative_time,
+                    )
+                    if self._moonraker and not self._kill:
+                        if comp.line_number not in self._compensated_lines:
+                            self._compensated_lines.add(comp.line_number)
+                            try:
+                                await self._inject_with_retry(comp.value)
+                                self.total_adjustments += 1
+                                self._log_entry(comp)
+                            except Exception as e:
+                                logger.warning("Failed to inject thermal: %s", e)
+                    break  # One thermal adjustment per cycle
 
     async def _inject_with_retry(self, gcode: str, max_retries: int = 3) -> None:
         """Inject gcode with retry on timeout."""

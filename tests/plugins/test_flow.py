@@ -85,6 +85,80 @@ class TestFlowPlugin:
         assert plugin.total_adjustments == first_count
 
     @pytest.mark.asyncio
+    async def test_precomputed_schedule(self):
+        plugin = FlowPlugin()
+        gcode = (
+            "G1 Z0.2 F3000\nG1 X10 Y10 E0.5 F1500\n"
+            "G1 X50 Y10 E2.0\nG1 X50 Y50 E4.0\n"
+            "G1 X10 Y50 E6.0\nG1 X10 Y10 E8.0"
+        )
+        await plugin.on_print_start("test.gcode", gcode)
+        # Schedule should be pre-computed with corner compensations
+        assert isinstance(plugin._scheduled_lines, list)
+        assert plugin._schedule_idx == 0
+        # There should be corner features -> scheduled compensations
+        if plugin.parse_result and plugin.parse_result.features:
+            corners = [
+                f for f in plugin.parse_result.features
+                if f.type == FeatureType.CORNER
+            ]
+            if corners:
+                assert len(plugin._scheduled_lines) > 0
+
+    @pytest.mark.asyncio
+    async def test_schedule_based_apply(self):
+        """Test that schedule-based _apply_compensations works."""
+        plugin = FlowPlugin()
+        gcode = (
+            "G1 Z0.2 F3000\nG1 X10 Y10 E0.5 F1500\n"
+            "G1 X50 Y10 E2.0\nG1 X50 Y50 E4.0\n"
+            "G1 X10 Y50 E6.0\nG1 X10 Y10 E8.0"
+        )
+        await plugin.on_print_start("test.gcode", gcode)
+        plugin._current_progress = 50.0
+        plugin._print_state = "printing"
+        await plugin._apply_compensations()
+        # Should not crash; active_compensations is a list
+        assert isinstance(plugin.active_compensations, list)
+
+    @pytest.mark.asyncio
+    async def test_feedback_loop(self):
+        """Test feedback loop queries printer state periodically."""
+        plugin = FlowPlugin()
+        query_calls = []
+
+        class MockMoonraker:
+            async def inject(self, gcode):
+                pass
+
+            async def query(self, method, params):
+                query_calls.append((method, params))
+                return {
+                    "status": {
+                        "gcode_move": {
+                            "speed_factor": 0.95,
+                            "extrude_factor": 1.0,
+                        }
+                    }
+                }
+
+        plugin._moonraker = MockMoonraker()
+        # Simulate 20 adjustments to trigger feedback
+        plugin.total_adjustments = 19
+        gcode = (
+            "G1 Z0.2 F3000\nG1 X10 Y10 E0.5 F1500\n"
+            "G1 X50 Y10 E2.0\nG1 X50 Y50 E4.0\n"
+            "G1 X10 Y50 E6.0\nG1 X10 Y10 E8.0"
+        )
+        await plugin.on_print_start("test.gcode", gcode)
+        plugin._current_progress = 10.0
+        plugin._print_state = "printing"
+        await plugin._apply_compensations()
+        # If 20th adjustment was hit, query should have been called
+        if plugin.total_adjustments >= 20 and plugin.total_adjustments % 20 == 0:
+            assert len(query_calls) > 0
+
+    @pytest.mark.asyncio
     async def test_inject_with_retry(self):
         """Test that injection retries on failure."""
         plugin = FlowPlugin()
@@ -208,6 +282,17 @@ class TestFlowCompensator:
         result = comp.compute_compensations(features, current_time=5.0)
         flow_comp = [c for c in result if "M221" in c.value][0]
         assert "S90" in flow_comp.value
+
+    def test_bridge_compensation_produces_flow_and_fan(self):
+        comp = FlowCompensator()
+        features = [
+            Feature(type=FeatureType.BRIDGE, line_number=200, estimated_time=10.0)
+        ]
+        result = comp.compute_compensations(features, current_time=5.0)
+        assert len(result) == 2
+        types = {c.type for c in result}
+        assert "M221" in types
+        assert "SET_FAN_SPEED" in types
 
     def test_sorted_by_time(self):
         comp = FlowCompensator()

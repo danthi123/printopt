@@ -130,6 +130,100 @@ class GcodeParser:
                     angle=angle_diff,
                 ))
 
+        # Detect potential bridges: long extrusion moves after a Z change
+        # where the move path doesn't overlap with the previous layer's paths
+        if result.layer_count > 1:
+            # Build set of XY cells occupied per layer
+            layer_cells: dict[int, set[tuple[int, int]]] = {}
+            current_layer_idx = 0
+            for move in result.moves:
+                for feat in result.features:
+                    if (
+                        feat.type == FeatureType.LAYER_CHANGE
+                        and feat.line_number <= move.line_number
+                    ):
+                        current_layer_idx = feat.metadata.get(
+                            "layer", current_layer_idx
+                        )
+                if move.is_extrusion:
+                    cell = (int(move.x / 2), int(move.y / 2))  # 2mm grid
+                    layer_cells.setdefault(current_layer_idx, set()).add(cell)
+
+            # Find moves on layer N that are NOT over layer N-1
+            current_layer_idx = 0
+            for move in result.moves:
+                for feat in result.features:
+                    if (
+                        feat.type == FeatureType.LAYER_CHANGE
+                        and feat.line_number <= move.line_number
+                    ):
+                        current_layer_idx = feat.metadata.get(
+                            "layer", current_layer_idx
+                        )
+                if (
+                    move.is_extrusion
+                    and current_layer_idx > 1
+                    and move.distance > 3.0
+                ):
+                    cell = (int(move.x / 2), int(move.y / 2))
+                    prev_cells = layer_cells.get(current_layer_idx - 1, set())
+                    if cell not in prev_cells:
+                        result.features.append(
+                            Feature(
+                                type=FeatureType.BRIDGE,
+                                line_number=move.line_number,
+                                estimated_time=move.cumulative_time,
+                                length=move.distance,
+                            )
+                        )
+
+        # Detect small perimeters: sequences of extrusion moves that form a
+        # closed or near-closed loop with total length < threshold
+        SMALL_PERIMETER_THRESHOLD = 15.0  # mm total perimeter length
+
+        perimeter_start: int | None = None
+        perimeter_length = 0.0
+        perimeter_moves: list[Move] = []
+
+        for move in result.moves:
+            if move.is_extrusion:
+                if perimeter_start is None:
+                    perimeter_start = move.line_number
+                perimeter_length += move.distance
+                perimeter_moves.append(move)
+            else:
+                if perimeter_start is not None and perimeter_length > 0:
+                    if (
+                        perimeter_length < SMALL_PERIMETER_THRESHOLD
+                        and len(perimeter_moves) >= 3
+                    ):
+                        result.features.append(
+                            Feature(
+                                type=FeatureType.SMALL_PERIMETER,
+                                line_number=perimeter_start,
+                                estimated_time=perimeter_moves[0].cumulative_time,
+                                length=perimeter_length,
+                            )
+                        )
+                    perimeter_start = None
+                    perimeter_length = 0.0
+                    perimeter_moves = []
+
+        # Handle trailing perimeter at end of gcode
+        if perimeter_start is not None and perimeter_length > 0:
+            if (
+                perimeter_length < SMALL_PERIMETER_THRESHOLD
+                and len(perimeter_moves) >= 3
+            ):
+                result.features.append(
+                    Feature(
+                        type=FeatureType.SMALL_PERIMETER,
+                        line_number=perimeter_start,
+                        estimated_time=perimeter_moves[0].cumulative_time,
+                        length=perimeter_length,
+                    )
+                )
+
         result.total_time = cumulative_time
         result.layer_count = layer_count
         return result
