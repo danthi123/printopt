@@ -309,23 +309,30 @@ class ThermalPlugin(Plugin):
         current_layer = 0
         prev_x, prev_y = 0.0, 0.0
 
-        # Find layer change line numbers and Z values
-        layer_lines: dict[int, int] = {}
-        self._layer_z_values: list[tuple[float, int]] = []  # (z, layer_num) sorted by z
+        # Use sequential layer numbering based on unique Z heights
+        # (metadata layer numbers are unreliable — they count Z-hops too)
+        z_to_seq: dict[float, int] = {}
+        seq = 0
+        self._layer_z_values: list[tuple[float, int]] = []
         for f in self.parse_result.features:
             if f.type == FeatureType.LAYER_CHANGE:
-                layer_num = f.metadata.get("layer", 0)
-                z = f.metadata.get("z", 0)
-                layer_lines[f.line_number] = layer_num
-                self._layer_z_values.append((z, layer_num))
+                z = round(f.metadata.get("z", 0), 2)
+                if z not in z_to_seq:
+                    seq += 1
+                    z_to_seq[z] = seq
+                    self._layer_z_values.append((z, seq))
         self._layer_z_values.sort()
-        if self._layer_z_values:
-            logger.info("Layer Z range: first=(z=%.2f, layer=%d), last=(z=%.2f, layer=%d)",
-                        self._layer_z_values[0][0], self._layer_z_values[0][1],
-                        self._layer_z_values[-1][0], self._layer_z_values[-1][1])
+
+        # Map line numbers to sequential layer numbers
+        layer_lines: dict[int, int] = {}
+        for f in self.parse_result.features:
+            if f.type == FeatureType.LAYER_CHANGE:
+                z = round(f.metadata.get("z", 0), 2)
+                layer_lines[f.line_number] = z_to_seq.get(z, 0)
+
+        logger.info("Layer Z mapping: %d unique Z heights, seq 1-%d", len(z_to_seq), seq)
 
         for move in self.parse_result.moves:
-            # Check if this move crosses a layer change
             if move.line_number in layer_lines:
                 current_layer = layer_lines[move.line_number]
 
