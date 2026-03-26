@@ -89,6 +89,9 @@ class ThermalPlugin(Plugin):
         elif state in ("standby", "complete", "cancelled", "error"):
             self._print_active = False
 
+        # Track progress for toolpath rendering
+        self._current_progress = status.get("progress", getattr(self, '_current_progress', 0))
+
         # Update nozzle temp and fan speed
         self._nozzle_temp = status.get("nozzle_temp", self._nozzle_temp)
         raw_fan = status.get("fan_speed")
@@ -289,63 +292,50 @@ class ThermalPlugin(Plugin):
         self.parse_result = None
 
     def _rebuild_toolpath_from_gcode(self) -> None:
-        """Build toolpath segments from parsed gcode for the current layer.
+        """Build toolpath from recently printed gcode moves.
 
-        Uses the full gcode data (not polled positions) for complete coverage.
-        Colors segments based on grid temperature at each position.
+        Uses print progress to find current position, then renders
+        the last ~2000 extrusion moves colored by grid temperature.
         """
         if not self.parse_result or not self.grid:
             return
 
-        # Rebuild every 5 seconds or on layer change
+        # Rebuild every 3 seconds
         now = time.monotonic()
         last_rebuild = getattr(self, '_last_rebuild_time', 0)
-        last_layer = getattr(self, '_last_rendered_layer', -1)
-        if now - last_rebuild < 3.0 and last_layer == self.current_layer:
+        if now - last_rebuild < 3.0:
             return
         self._last_rebuild_time = now
-        self._last_rendered_layer = self.current_layer
 
-        # Use pre-built layer index for fast lookup
-        target_start_layer = max(1, self.current_layer - 2)
-        start_line = 0
-        end_line = 999999999
-        layer_ranges = getattr(self, '_layer_move_ranges', {})
-        for layer_num in range(target_start_layer, self.current_layer + 1):
-            r = layer_ranges.get(layer_num)
-            if r:
-                if start_line == 0:
-                    start_line = r[0]
-                end_line = r[1]
+        # Use progress to find current move index
+        progress = getattr(self, '_current_progress', 0)
+        if not progress:
+            # Try to get from last status
+            progress = self._last_z / (self.grid.config.bed_z or 248) * 100 if self._last_z > 0 else 0
 
-        if start_line == 0:
+        moves = self.parse_result.moves
+        total_moves = len(moves)
+        if total_moves == 0:
             return
 
-        # Build segments using binary search to find start position
+        current_idx = min(int(progress / 100.0 * total_moves), total_moves - 1)
+
+        # Render last 2000 extrusion moves up to current position
+        RENDER_COUNT = 2000
+        start_idx = max(0, current_idx - RENDER_COUNT * 3)  # overscan since not all moves are extrusions
+
         segments = []
         prev_move = None
         resolution = self.grid.config.resolution
 
-        # Get numpy grid for temperature lookups (single transfer for GPU)
+        # Single GPU→CPU transfer for temperature lookups
         if self.grid.xp is not np:
             grid_np = self.grid.xp.asnumpy(self.grid.grid)
         else:
             grid_np = self.grid.grid
 
-        # Binary search for the first move at or after start_line
-        moves = self.parse_result.moves
-        lo, hi = 0, len(moves) - 1
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if moves[mid].line_number < start_line:
-                lo = mid + 1
-            else:
-                hi = mid
-
-        for i in range(lo, len(moves)):
+        for i in range(start_idx, min(current_idx + 1, total_moves)):
             move = moves[i]
-            if move.line_number > end_line:
-                break
             if move.is_extrusion and prev_move and move.distance > 0.5:
                 # Get temperature at endpoint
                 ix = int(move.x / resolution)
