@@ -106,10 +106,20 @@ class ThermalPlugin(Plugin):
         if self._nozzle_temp > 0:
             self.grid.nozzle_temp = self._nozzle_temp
 
-        # Calculate layer from Z position (robust across restarts)
-        # Assumes 0.2mm layer height — first layer at ~0.2mm
-        layer_height = 0.2
-        estimated_layer = max(0, int(new_z / layer_height))
+        # Calculate layer from Z position using gcode's actual layer Z values
+        z_values = getattr(self, '_layer_z_values', [])
+        if z_values:
+            # Binary search for the closest layer at or below current Z
+            import bisect
+            idx = bisect.bisect_right([z for z, _ in z_values], new_z + 0.05) - 1
+            if idx >= 0:
+                estimated_layer = z_values[idx][1]
+            else:
+                estimated_layer = 0
+        else:
+            # Fallback: assume 0.2mm layers
+            estimated_layer = max(0, int(new_z / 0.2))
+
         if estimated_layer > self.current_layer:
             self.current_layer = estimated_layer
             await self.on_layer(self.current_layer, new_z)
@@ -301,11 +311,16 @@ class ThermalPlugin(Plugin):
         current_layer = 0
         prev_x, prev_y = 0.0, 0.0
 
-        # Find layer change line numbers
+        # Find layer change line numbers and Z values
         layer_lines: dict[int, int] = {}
+        self._layer_z_values: list[tuple[float, int]] = []  # (z, layer_num) sorted by z
         for f in self.parse_result.features:
             if f.type == FeatureType.LAYER_CHANGE:
-                layer_lines[f.line_number] = f.metadata.get("layer", 0)
+                layer_num = f.metadata.get("layer", 0)
+                z = f.metadata.get("z", 0)
+                layer_lines[f.line_number] = layer_num
+                self._layer_z_values.append((z, layer_num))
+        self._layer_z_values.sort()
 
         for move in self.parse_result.moves:
             # Check if this move crosses a layer change
