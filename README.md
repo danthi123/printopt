@@ -62,6 +62,23 @@ printopt run
 # 5. Start a print from your slicer — flow and thermal plugins activate automatically
 ```
 
+## Screenshots
+
+### Vibration Analysis
+Custom multi-notch shaper design with FFT frequency response plot:
+
+![Vibration Analysis](screenshots/vibration-analysis.png)
+
+### Flow Compensation
+Real-time pressure advance and speed adjustments during printing:
+
+![Flow Compensation](screenshots/flow-compensation.png)
+
+### Thermal Simulation
+Live toolpath temperature visualization with hotspot detection:
+
+![Thermal Simulation](screenshots/thermal-simulation.png)
+
 ## Commands
 
 | Command | Description |

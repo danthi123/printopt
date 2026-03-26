@@ -21,6 +21,7 @@ _ws_clients: list[WebSocket] = []
 _poll_callback = None  # Set by do_run before starting the app
 _poll_task = None
 
+_printer_info: dict = {}
 _kill_all = False
 _reset_all = False
 _pending_actions: list[dict] = []
@@ -37,6 +38,12 @@ _settings = {
     "material": "petg",
     "grid_resolution": 1.0,
 }
+
+
+def set_printer_info(info: dict) -> None:
+    """Store printer hardware/software info for the dashboard."""
+    global _printer_info
+    _printer_info = info
 
 
 def set_poll_callback(callback) -> None:
@@ -85,6 +92,10 @@ def create_app() -> FastAPI:
     @app.get("/api/status")
     async def api_status():
         return _state
+
+    @app.get("/api/printer-info")
+    async def get_printer_info():
+        return _printer_info
 
     @app.get("/api/settings")
     async def get_settings():

@@ -563,8 +563,48 @@ function saveSettings() {
     .catch(function(e) { console.log('Failed to save settings:', e); });
 }
 
+function loadPrinterInfo() {
+    fetch('/api/printer-info')
+        .then(function(r) { return r.json(); })
+        .then(function(info) {
+            var el = document.getElementById('printer-info');
+            if (!info || !info.host) {
+                el.textContent = 'Not connected';
+                return;
+            }
+            var lines = [];
+            lines.push('Host: ' + info.host);
+            lines.push('Kinematics: ' + info.kinematics);
+            lines.push('Bed: ' + info.bed_x + ' x ' + info.bed_y + ' x ' + info.bed_z + ' mm');
+            lines.push('Max velocity: ' + info.max_velocity + ' mm/s');
+            lines.push('Nozzle: ' + info.nozzle_diameter + ' mm');
+            lines.push('ADXL345: ' + (info.has_accelerometer ? 'Yes' : 'No'));
+            if (info.shaper_x) {
+                lines.push('Shaper X: ' + info.shaper_x[0] + ' @ ' + info.shaper_x[1] + ' Hz');
+            }
+            if (info.shaper_y) {
+                lines.push('Shaper Y: ' + info.shaper_y[0] + ' @ ' + info.shaper_y[1] + ' Hz');
+            }
+            if (info.klipper_version) {
+                lines.push('Klipper: ' + info.klipper_version);
+            }
+            if (info.moonraker_version) {
+                lines.push('Moonraker: ' + info.moonraker_version);
+            }
+            if (info.klippy_state) {
+                lines.push('State: ' + info.klippy_state);
+            }
+            el.textContent = lines.join('\n');
+        })
+        .catch(function() {
+            document.getElementById('printer-info').textContent = 'Not connected';
+        });
+}
+
 document.getElementById('btn-kill').addEventListener('click', killAll);
 document.getElementById('btn-reset').addEventListener('click', resetAll);
 // Plugin buttons use onclick handlers in HTML to avoid duplicate triggers
 connect();
 loadSettings();
+loadPrinterInfo();
+setInterval(loadPrinterInfo, 30000);

@@ -470,6 +470,30 @@ async def do_run(
         else:
             client = _client
 
+        # Query Moonraker and Klipper versions
+        try:
+            server_info = await client.query("server.info")
+            printer_info = {
+                "host": config.host,
+                "kinematics": config.kinematics,
+                "bed_x": config.bed_x,
+                "bed_y": config.bed_y,
+                "bed_z": config.bed_z,
+                "max_velocity": config.max_velocity,
+                "nozzle_diameter": config.nozzle_diameter,
+                "has_accelerometer": config.has_accelerometer,
+                "shaper_x": list(config.shaper_x),
+                "shaper_y": list(config.shaper_y),
+                "moonraker_version": server_info.get("moonraker_version", "unknown"),
+                "klippy_state": server_info.get("klippy_state", "unknown"),
+                "klipper_version": server_info.get("software_version", "unknown"),
+            }
+        except Exception:
+            printer_info = {"host": config.host, "kinematics": config.kinematics}
+
+        from printopt.dashboard.server import set_printer_info
+        set_printer_info(printer_info)
+
         mgr = PluginManager()
 
         plugin_map = {

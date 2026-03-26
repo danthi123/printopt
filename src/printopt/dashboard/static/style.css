@@ -8,6 +8,7 @@ header h1 { font-size: 18px; }
 #sidebar { width: 260px; padding: 16px; background: #0f3460; overflow-y: auto; flex-shrink: 0; }
 #sidebar h3 { margin: 12px 0 6px; font-size: 13px; text-transform: uppercase; color: #888; }
 #printer-status, #plugin-list { font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; white-space: pre; line-height: 1.5; color: #ccc; }
+#printer-info { font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; white-space: pre; line-height: 1.5; color: #999; }
 #plugin-list .plugin-item { padding: 4px 8px; border-radius: 4px; margin: 2px 0; }
 #main-panel { flex: 1; padding: 20px; overflow-y: auto; }
 .plugin-panel h2 { margin-bottom: 16px; font-size: 16px; color: #e0e0e0; }
