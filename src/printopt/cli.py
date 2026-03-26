@@ -473,8 +473,17 @@ async def do_run(
         # Query Moonraker and Klipper versions
         try:
             server_info = await client.query("server.info")
+            # Klipper version is on a separate endpoint
+            try:
+                klipper_info = await client.query("printer.info")
+                klipper_version = klipper_info.get("software_version", "unknown")
+                hostname = klipper_info.get("hostname", "")
+            except Exception:
+                klipper_version = "unknown"
+                hostname = ""
             printer_info = {
                 "host": config.host,
+                "hostname": hostname,
                 "kinematics": config.kinematics,
                 "bed_x": config.bed_x,
                 "bed_y": config.bed_y,
@@ -486,7 +495,7 @@ async def do_run(
                 "shaper_y": list(config.shaper_y),
                 "moonraker_version": server_info.get("moonraker_version", "unknown"),
                 "klippy_state": server_info.get("klippy_state", "unknown"),
-                "klipper_version": server_info.get("software_version", "unknown"),
+                "klipper_version": klipper_version,
             }
         except Exception:
             printer_info = {"host": config.host, "kinematics": config.kinematics}
