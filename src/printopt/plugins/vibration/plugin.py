@@ -25,6 +25,7 @@ class VibrationPlugin(Plugin):
     def __init__(self) -> None:
         super().__init__()
         self.results: dict = {}
+        self.position_results: dict[str, dict] = {}  # key: "x_120_120" -> results
         self._results_path: Path | None = None
 
     async def on_start(self) -> None:
@@ -84,6 +85,26 @@ class VibrationPlugin(Plugin):
             self._results_path.write_text(json.dumps(self.results, indent=2))
             logger.info("Vibration results saved for %s axis", axis)
 
+    def store_position_result(
+        self, axis: str, x: float, y: float,
+        peaks: list[ResonancePeak], shapers: list[ShaperResult],
+    ) -> None:
+        """Store per-position resonance results for the resonance map."""
+        key = f"{axis}_{int(x)}_{int(y)}"
+        self.position_results[key] = {
+            "axis": axis,
+            "x": x,
+            "y": y,
+            "peaks": [
+                {"frequency": p.frequency, "amplitude": p.amplitude}
+                for p in peaks
+            ],
+            "best": {
+                "shaper_type": shapers[0].shaper_type,
+                "frequency": shapers[0].frequency,
+            } if shapers else None,
+        }
+
     def get_dashboard_data(self) -> dict:
         data = {"results": {}}
         for axis in ("x", "y"):
@@ -96,4 +117,5 @@ class VibrationPlugin(Plugin):
                     "psd_freqs": r.get("psd_freqs", []),
                     "psd_values": r.get("psd_values", []),
                 }
+        data["position_results"] = self.position_results
         return data

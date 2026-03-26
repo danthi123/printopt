@@ -6,7 +6,9 @@ import subprocess
 import numpy as np
 import pytest
 
-from printopt.plugins.vibration.capture import parse_accel_csv, fetch_resonance_csv, AccelData
+from printopt.plugins.vibration.capture import (
+    parse_accel_csv, fetch_resonance_csv, get_test_positions, AccelData,
+)
 
 
 RAW_CSV = """#time,accel_x,accel_y,accel_z
@@ -70,6 +72,46 @@ class TestParseAccelCSV:
         result = parse_accel_csv(PSD_CSV_NO_HASH, axis="y")
         # psd_xyz is used regardless of axis arg for PSD data
         assert result.samples[1] == pytest.approx(4009.0, rel=1e-2)
+
+
+class TestGetTestPositions:
+    def test_single_position(self):
+        positions = get_test_positions(245, 245, 1)
+        assert len(positions) == 1
+        assert positions[0] == (122.5, 122.5)
+
+    def test_five_positions(self):
+        positions = get_test_positions(245, 245, 5)
+        assert len(positions) == 5
+        assert positions[0] == (122.5, 122.5)  # center first
+
+    def test_nine_positions(self):
+        positions = get_test_positions(245, 245, 9)
+        assert len(positions) == 9
+
+    def test_nine_positions_grid_corners(self):
+        """3x3 grid should cover from 20% margin to 80% on each side."""
+        positions = get_test_positions(245, 245, 9)
+        xs = sorted(set(p[0] for p in positions))
+        ys = sorted(set(p[1] for p in positions))
+        assert len(xs) == 3
+        assert len(ys) == 3
+        assert xs[0] == pytest.approx(49.0)   # 245 * 0.2
+        assert xs[2] == pytest.approx(196.0)  # 245 - 49
+        assert ys[0] == pytest.approx(49.0)
+        assert ys[2] == pytest.approx(196.0)
+
+    def test_zero_positions_returns_center(self):
+        positions = get_test_positions(200, 200, 0)
+        assert len(positions) == 1
+        assert positions[0] == (100.0, 100.0)
+
+    def test_rectangular_bed(self):
+        positions = get_test_positions(300, 200, 5)
+        assert len(positions) == 5
+        cx, cy = positions[0]
+        assert cx == pytest.approx(150.0)
+        assert cy == pytest.approx(100.0)
 
 
 class TestFetchResonanceCSV:

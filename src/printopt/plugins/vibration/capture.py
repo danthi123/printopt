@@ -18,6 +18,76 @@ from printopt.core.moonraker import MoonrakerClient
 logger = logging.getLogger(__name__)
 
 
+def get_test_positions(bed_x: float, bed_y: float, n_positions: int) -> list[tuple[float, float]]:
+    """Generate test positions across the bed.
+
+    1 = center only
+    5 = center + 4 corners (inset 20%)
+    9 = 3x3 grid (inset 20%)
+    """
+    cx, cy = bed_x / 2, bed_y / 2
+    margin_x, margin_y = bed_x * 0.2, bed_y * 0.2
+
+    if n_positions <= 1:
+        return [(cx, cy)]
+
+    if n_positions <= 5:
+        return [
+            (cx, cy),
+            (margin_x, margin_y),
+            (bed_x - margin_x, margin_y),
+            (margin_x, bed_y - margin_y),
+            (bed_x - margin_x, bed_y - margin_y),
+        ]
+
+    # 3x3 grid
+    positions = []
+    for iy in range(3):
+        for ix in range(3):
+            x = margin_x + (bed_x - 2 * margin_x) * ix / 2
+            y = margin_y + (bed_y - 2 * margin_y) * iy / 2
+            positions.append((x, y))
+    return positions
+
+
+async def run_vibration_test_at_position(
+    client: MoonrakerClient,
+    axis: str,
+    x: float,
+    y: float,
+    min_freq: float = 5.0,
+    max_freq: float = 133.0,
+    hz_per_sec: float = 1.0,
+) -> str:
+    """Run resonance test at a specific position (assumes already homed)."""
+    logger.info("Moving to test position (%.0f, %.0f)...", x, y)
+    await client.inject(f"G1 X{x:.1f} Y{y:.1f} Z10 F6000")
+    await asyncio.sleep(3)
+
+    logger.info("Running resonance test on %s axis at (%.0f, %.0f)...", axis.upper(), x, y)
+    await client.inject(
+        f"TEST_RESONANCES AXIS={axis.upper()} "
+        f"FREQ_START={min_freq} FREQ_END={max_freq} "
+        f"HZ_PER_SEC={hz_per_sec} "
+        f"OUTPUT=resonances,raw_data"
+    )
+
+    # Wait for completion
+    for _ in range(120):
+        await asyncio.sleep(2)
+        try:
+            result = await client.query(
+                "printer.objects.query",
+                {"objects": {"toolhead": ["position"]}}
+            )
+            break
+        except Exception:
+            continue
+
+    logger.info("Resonance test at (%.0f, %.0f) complete", x, y)
+    return f"resonances_{axis}"
+
+
 @dataclass
 class AccelData:
     """Raw accelerometer data from a single test run."""

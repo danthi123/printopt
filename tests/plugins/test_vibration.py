@@ -130,6 +130,44 @@ class TestVibrationPluginResults:
         assert data["results"]["x"]["best"]["shaper_type"] == "ei"
 
 
+class TestPositionResults:
+    def test_store_position_result(self):
+        plugin = VibrationPlugin()
+        peaks = [ResonancePeak(frequency=45.0, amplitude=0.5, prominence=0.3)]
+        shapers = [ShaperResult(shaper_type="ei", frequency=45.0, remaining_vibration=0.01, max_accel_loss=0.1)]
+
+        plugin.store_position_result("x", 120.0, 120.0, peaks, shapers)
+
+        assert "x_120_120" in plugin.position_results
+        result = plugin.position_results["x_120_120"]
+        assert result["axis"] == "x"
+        assert result["x"] == 120.0
+        assert result["y"] == 120.0
+        assert len(result["peaks"]) == 1
+        assert result["peaks"][0]["frequency"] == 45.0
+        assert result["best"]["shaper_type"] == "ei"
+
+    def test_store_position_result_no_shapers(self):
+        plugin = VibrationPlugin()
+        peaks = [ResonancePeak(frequency=45.0, amplitude=0.5, prominence=0.3)]
+
+        plugin.store_position_result("y", 50.0, 50.0, peaks, [])
+
+        result = plugin.position_results["y_50_50"]
+        assert result["best"] is None
+
+    def test_dashboard_data_includes_position_results(self):
+        plugin = VibrationPlugin()
+        peaks = [ResonancePeak(frequency=45.0, amplitude=0.5, prominence=0.3)]
+        shapers = [ShaperResult(shaper_type="mzv", frequency=45.0, remaining_vibration=0.02, max_accel_loss=0.05)]
+
+        plugin.store_position_result("x", 120.0, 120.0, peaks, shapers)
+
+        data = plugin.get_dashboard_data()
+        assert "position_results" in data
+        assert "x_120_120" in data["position_results"]
+
+
 class TestEnhancedAnalysis:
     def test_compute_psd_high_resolution(self):
         """High-res PSD should have more frequency bins than default."""
