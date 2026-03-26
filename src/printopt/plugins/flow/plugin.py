@@ -90,6 +90,9 @@ class FlowPlugin(Plugin):
         # During active printing, compute and apply compensations
         if self._print_state == "printing" and self.parse_result and not self._kill:
             await self._apply_compensations()
+        elif self.total_adjustments == 0 and self.parse_result:
+            logger.info("Flow NOT running: state=%s, parse=%s, kill=%s, progress=%.1f",
+                        self._print_state, bool(self.parse_result), self._kill, self._current_progress)
 
     async def _apply_compensations(self) -> None:
         # Kill switch restore: send reset commands if pending
