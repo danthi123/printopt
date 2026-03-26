@@ -182,9 +182,22 @@ class ThermalPlugin(Plugin):
                 })
 
     async def on_print_end(self) -> None:
+        if self._moonraker:
+            if self._speed_adjusted:
+                try:
+                    await self._moonraker.inject("M220 S100")
+                except Exception:
+                    pass
+            if self._fan_adjusted:
+                try:
+                    await self._moonraker.inject(f"M106 S{int(self._baseline_fan * 255 / 100)}")
+                except Exception:
+                    pass
+        self._speed_adjusted = False
+        self._fan_adjusted = False
+        self._print_active = False
         if self.grid:
             logger.info("Thermal simulation complete. %d warnings.", len(self.warnings))
-        self._print_active = False
 
     async def on_stop(self) -> None:
         self.grid = None
@@ -221,6 +234,8 @@ class ThermalPlugin(Plugin):
                 "z": round(self._last_z, 2),
             },
         }
+        data["speed_adjusted"] = self._speed_adjusted
+        data["fan_adjusted"] = self._fan_adjusted
         if self.grid:
             data["max_temp"] = round(float(self.grid.grid.max()), 1)
             data["max_gradient"] = round(self.grid.get_max_gradient(), 2)

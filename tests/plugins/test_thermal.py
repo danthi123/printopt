@@ -1,5 +1,7 @@
 """Tests for thermal simulation plugin."""
 
+from unittest.mock import AsyncMock
+
 import numpy as np
 import pytest
 
@@ -159,3 +161,61 @@ class TestThermalPlugin:
         assert "heatmap" in data
         assert "nozzle_pos" in data
         assert data["print_active"] is True
+
+    @pytest.mark.asyncio
+    async def test_thermal_adjustments_on_high_gradient(self):
+        plugin = ThermalPlugin()
+        plugin._moonraker = AsyncMock()
+        plugin._moonraker.inject = AsyncMock()
+        await plugin.on_print_start("test.gcode", "G1 X50 Y50 E1 F1000")
+        plugin._print_active = True
+        # Create a high gradient by setting a single hot cell
+        plugin.grid.grid[50, 50] = 200.0
+        await plugin._apply_thermal_adjustments()
+        assert plugin._fan_adjusted is True
+        # Verify inject was called
+        plugin._moonraker.inject.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_thermal_adjustments_on_many_hotspots(self):
+        plugin = ThermalPlugin()
+        plugin._moonraker = AsyncMock()
+        plugin._moonraker.inject = AsyncMock()
+        await plugin.on_print_start("test.gcode", "G1 X50 Y50 E1 F1000")
+        plugin._print_active = True
+        # Create many hotspots above glass transition (78C)
+        for i in range(10):
+            plugin.grid.grid[50 + i, 50 + i] = 100.0
+        await plugin._apply_thermal_adjustments()
+        assert plugin._speed_adjusted is True
+
+    @pytest.mark.asyncio
+    async def test_thermal_restores_on_print_end(self):
+        plugin = ThermalPlugin()
+        plugin._moonraker = AsyncMock()
+        plugin._moonraker.inject = AsyncMock()
+        await plugin.on_print_start("test.gcode", "G1 X50 Y50 E1 F1000")
+        plugin._speed_adjusted = True
+        plugin._fan_adjusted = True
+        await plugin.on_print_end()
+        assert plugin._speed_adjusted is False
+        assert plugin._fan_adjusted is False
+
+    @pytest.mark.asyncio
+    async def test_no_adjustment_without_moonraker(self):
+        plugin = ThermalPlugin()
+        await plugin.on_print_start("test.gcode", "G1 X50 Y50 E1 F1000")
+        plugin._print_active = True
+        plugin.grid.grid[50, 50] = 200.0
+        await plugin._apply_thermal_adjustments()
+        # No moonraker, so no adjustments should be made
+        assert plugin._fan_adjusted is False
+        assert plugin._speed_adjusted is False
+
+    def test_dashboard_data_includes_adjustment_status(self):
+        plugin = ThermalPlugin()
+        data = plugin.get_dashboard_data()
+        assert "speed_adjusted" in data
+        assert "fan_adjusted" in data
+        assert data["speed_adjusted"] is False
+        assert data["fan_adjusted"] is False
