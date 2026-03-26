@@ -309,18 +309,21 @@ class ThermalPlugin(Plugin):
         current_layer = 0
         prev_x, prev_y = 0.0, 0.0
 
-        # Use sequential layer numbering based on unique Z heights
-        # (metadata layer numbers are unreliable — they count Z-hops too)
+        # Use sequential layer numbering based on increasing Z heights only
+        # (skip Z-hops which go up temporarily and come back down)
         z_to_seq: dict[float, int] = {}
         seq = 0
+        max_z = 0.0
         self._layer_z_values: list[tuple[float, int]] = []
         for f in self.parse_result.features:
             if f.type == FeatureType.LAYER_CHANGE:
                 z = round(f.metadata.get("z", 0), 2)
-                if z not in z_to_seq:
-                    seq += 1
-                    z_to_seq[z] = seq
-                    self._layer_z_values.append((z, seq))
+                if z > max_z:  # Only count real layer advances, not Z-hops
+                    max_z = z
+                    if z not in z_to_seq:
+                        seq += 1
+                        z_to_seq[z] = seq
+                        self._layer_z_values.append((z, seq))
         self._layer_z_values.sort()
 
         # Map line numbers to sequential layer numbers
