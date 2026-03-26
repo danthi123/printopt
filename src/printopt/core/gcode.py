@@ -130,52 +130,48 @@ class GcodeParser:
                     angle=angle_diff,
                 ))
 
-        # Detect potential bridges: long extrusion moves after a Z change
-        # where the move path doesn't overlap with the previous layer's paths
-        if result.layer_count > 1:
-            # Build set of XY cells occupied per layer
+        # Bridge detection: single pass with layer tracking
+        layer_changes = [f for f in result.features if f.type == FeatureType.LAYER_CHANGE]
+        if len(layer_changes) > 1:
             layer_cells: dict[int, set[tuple[int, int]]] = {}
-            current_layer_idx = 0
-            for move in result.moves:
-                for feat in result.features:
-                    if (
-                        feat.type == FeatureType.LAYER_CHANGE
-                        and feat.line_number <= move.line_number
-                    ):
-                        current_layer_idx = feat.metadata.get(
-                            "layer", current_layer_idx
-                        )
-                if move.is_extrusion:
-                    cell = (int(move.x / 2), int(move.y / 2))  # 2mm grid
-                    layer_cells.setdefault(current_layer_idx, set()).add(cell)
+            lc_idx = 0
+            cur_layer = 0
 
-            # Find moves on layer N that are NOT over layer N-1
-            current_layer_idx = 0
+            # First pass: build cell map per layer
             for move in result.moves:
-                for feat in result.features:
-                    if (
-                        feat.type == FeatureType.LAYER_CHANGE
-                        and feat.line_number <= move.line_number
-                    ):
-                        current_layer_idx = feat.metadata.get(
-                            "layer", current_layer_idx
-                        )
-                if (
-                    move.is_extrusion
-                    and current_layer_idx > 1
-                    and move.distance > 3.0
-                ):
+                while lc_idx < len(layer_changes) and layer_changes[lc_idx].line_number <= move.line_number:
+                    cur_layer = layer_changes[lc_idx].metadata.get("layer", cur_layer)
+                    lc_idx += 1
+                if move.is_extrusion:
+                    layer_cells.setdefault(cur_layer, set()).add((int(move.x / 2), int(move.y / 2)))
+
+            # Second pass: find unsupported moves
+            lc_idx = 0
+            cur_layer = 0
+            MAX_BRIDGES_PER_LAYER = 10
+            bridges_this_layer = 0
+            prev_layer_for_bridges = 0
+
+            for move in result.moves:
+                while lc_idx < len(layer_changes) and layer_changes[lc_idx].line_number <= move.line_number:
+                    cur_layer = layer_changes[lc_idx].metadata.get("layer", cur_layer)
+                    lc_idx += 1
+                    if cur_layer != prev_layer_for_bridges:
+                        bridges_this_layer = 0
+                        prev_layer_for_bridges = cur_layer
+
+                if (move.is_extrusion and cur_layer > 1 and move.distance > 5.0
+                        and bridges_this_layer < MAX_BRIDGES_PER_LAYER):
                     cell = (int(move.x / 2), int(move.y / 2))
-                    prev_cells = layer_cells.get(current_layer_idx - 1, set())
+                    prev_cells = layer_cells.get(cur_layer - 1, set())
                     if cell not in prev_cells:
-                        result.features.append(
-                            Feature(
-                                type=FeatureType.BRIDGE,
-                                line_number=move.line_number,
-                                estimated_time=move.cumulative_time,
-                                length=move.distance,
-                            )
-                        )
+                        result.features.append(Feature(
+                            type=FeatureType.BRIDGE,
+                            line_number=move.line_number,
+                            estimated_time=move.cumulative_time,
+                            length=move.distance,
+                        ))
+                        bridges_this_layer += 1
 
         # Detect small perimeters: sequences of extrusion moves that form a
         # closed or near-closed loop with total length < threshold

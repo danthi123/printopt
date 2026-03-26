@@ -6,6 +6,7 @@ import asyncio
 import csv
 import io
 import logging
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,10 +173,11 @@ async def fetch_resonance_csv(client: MoonrakerClient, axis: str) -> str:
     host = client.host
 
     # Find the latest resonances CSV for this axis
+    safe_axis = shlex.quote(axis)
     try:
         result = subprocess.run(
             ["ssh", f"root@{host}",
-             f"ls -t /tmp/resonances_{axis}_*.csv 2>/dev/null | head -1"],
+             f"ls -t /tmp/resonances_{safe_axis}_*.csv 2>/dev/null | head -1"],
             capture_output=True, text=True, timeout=10,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
@@ -190,7 +192,7 @@ async def fetch_resonance_csv(client: MoonrakerClient, axis: str) -> str:
     # Read the file content via SSH
     try:
         result = subprocess.run(
-            ["ssh", f"root@{host}", f"cat {csv_path}"],
+            ["ssh", f"root@{host}", f"cat -- {shlex.quote(csv_path)}"],
             capture_output=True, text=True, timeout=10,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
@@ -209,10 +211,11 @@ async def fetch_raw_accel_csv(client: MoonrakerClient, axis: str) -> str:
     """Fetch the most recent raw accelerometer CSV for an axis."""
     axis = axis.lower()
     host = client.host
+    safe_axis = shlex.quote(axis)
     try:
         result = subprocess.run(
             ["ssh", f"root@{host}",
-             f"ls -t /tmp/raw_data_{axis}_*.csv 2>/dev/null | head -1"],
+             f"ls -t /tmp/raw_data_{safe_axis}_*.csv 2>/dev/null | head -1"],
             capture_output=True, text=True, timeout=10,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
@@ -226,7 +229,7 @@ async def fetch_raw_accel_csv(client: MoonrakerClient, axis: str) -> str:
 
     try:
         result = subprocess.run(
-            ["ssh", f"root@{host}", f"cat {csv_path}"],
+            ["ssh", f"root@{host}", f"cat -- {shlex.quote(csv_path)}"],
             capture_output=True, text=True, timeout=30,  # raw files are larger
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:

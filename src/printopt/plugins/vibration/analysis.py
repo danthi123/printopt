@@ -89,6 +89,9 @@ def compute_psd_multitaper(
             freqs = f
         all_psds.append(p)
 
+    if freqs is None:
+        return np.array([]), np.array([])
+
     # Geometric mean (better for log-scale data than arithmetic mean)
     psd_stack = np.array(all_psds)
     psd_stack = np.clip(psd_stack, 1e-20, None)  # avoid log(0)
@@ -160,7 +163,6 @@ def _shaper_response(shaper_type: str, freq: float, test_freqs: np.ndarray) -> n
         T = np.array([0.0, 0.5 / freq])
     elif shaper_type == "mzv":
         df = 0.05
-        b = np.exp(-df * np.pi / np.sqrt(1.0 - df**2))
         a1 = 1.0 - 1.0 / np.sqrt(2.0)
         A = np.array([a1, 1.0 - 2.0 * a1, a1])
         T = np.array([0.0, 0.375 / freq, 0.75 / freq])
@@ -251,8 +253,10 @@ def evaluate_shapers(
                 # Remaining vibration = integral of filtered PSD
                 filtered_psd = psd * response**2
                 remaining = np.trapz(filtered_psd, freqs) / total_vibration
-                # Max acceleration loss = max response value (ideally 1.0)
-                accel_loss = 1.0 - np.min(response)
+                # Acceleration loss is proportional to shaper duration
+                _pulse_counts = {"zv": 1, "mzv": 2, "ei": 2, "2hump_ei": 4, "3hump_ei": 6}
+                _n_half = _pulse_counts.get(shaper_type, 2)
+                accel_loss = _n_half * 0.5 / sf if sf > 0 else 0.0
 
                 if remaining < best_remaining:
                     best_remaining = remaining
@@ -321,6 +325,7 @@ def analyze_raw_data(
     # Estimate actual sample rate from timestamps
     if times:
         actual_fs = len(times) / (times[-1] - times[0]) if times[-1] > times[0] else fs
+        actual_fs = max(100.0, min(6400.0, actual_fs))
         logger.info("Raw data: %d samples, %.1f Hz sample rate, %.2f seconds",
                      len(samples), actual_fs, times[-1] - times[0])
         fs = actual_fs
@@ -515,14 +520,16 @@ def design_custom_shaper(
             pass
 
     # Method 3: Differential Evolution (global, slower but finds better optima)
-    try:
-        result = differential_evolution(objective, bounds, maxiter=500,
-                                       seed=42, tol=1e-8, polish=True)
-        if result.fun < best_remaining:
-            best_remaining = result.fun
-            best_result = result.x
-    except Exception:
-        pass
+    # Skip if L-BFGS-B already achieved very low remaining vibration
+    if best_remaining > 0.01:
+        try:
+            result = differential_evolution(objective, bounds, maxiter=500,
+                                           seed=42, tol=1e-8, polish=True)
+            if result.fun < best_remaining:
+                best_remaining = result.fun
+                best_result = result.x
+        except Exception:
+            pass
 
     if best_result is None or best_remaining >= best_preset_remaining:
         # Optimization didn't improve on the best preset

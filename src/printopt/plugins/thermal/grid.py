@@ -82,8 +82,11 @@ class ThermalGrid:
             self.hotspot_threshold = c.hotspot_warning_count
 
     def advance_layer(self) -> None:
-        """Record current heat state and apply accumulated layer history."""
-        # Save current grid as a layer snapshot (just the delta above ambient)
+        """Record current heat state for layer history analysis.
+
+        Does NOT modify self.grid — history is only used for analysis
+        via get_effective_grid().
+        """
         delta = self.grid - self.config.ambient_temp
         if self.xp is not np:
             delta = self.xp.asnumpy(delta)
@@ -93,14 +96,18 @@ class ThermalGrid:
         if len(self._layer_history) > self._max_history:
             self._layer_history.pop(0)
 
-        # Apply accumulated heat from previous layers
-        # Each previous layer contributes diminishing heat (conduction upward)
+    def get_effective_grid(self) -> np.ndarray:
+        """Grid with accumulated heat from previous layers.
+
+        Used for hotspot/gradient analysis to account for heat buildup.
+        """
+        if self.xp is not np:
+            result = self.xp.asnumpy(self.grid.copy())
+        else:
+            result = self.grid.copy()
         for i, hist in enumerate(reversed(self._layer_history[:-1])):
-            decay = 0.3 ** (i + 1)  # 30% per layer distance
-            if self.xp is not np:
-                self.grid += self.xp.asarray(hist * decay)
-            else:
-                self.grid += hist * decay
+            result += hist * (0.3 ** (i + 1))
+        return result
 
     def reset(self) -> None:
         """Reset grid to ambient temperature."""
@@ -139,6 +146,8 @@ class ThermalGrid:
         - Convection to air (fan-dependent)
         - Bed conduction (cells cool toward bed temp)
         """
+        # Cap dt for numerical stability (CFL condition)
+        dt = min(dt, 2.0)  # Never simulate more than 2 seconds in one step
         xp = self.xp
         c = self.config
         old = self.grid.copy()
@@ -179,11 +188,12 @@ class ThermalGrid:
         """Find cells above the glass transition temperature.
 
         Returns list of (x_mm, y_mm, temperature) tuples.
+        Uses effective grid (with layer history) for analysis.
         """
         if threshold is None:
             threshold = self.config.glass_transition
-        # Work in numpy for the list comprehension
-        grid_np = self.xp.asnumpy(self.grid) if self.xp is not np else self.grid
+        # Use effective grid that includes layer history
+        grid_np = self.get_effective_grid()
         ys, xs = np.where(grid_np > threshold)
         res = self.config.resolution
         return [
@@ -195,15 +205,16 @@ class ThermalGrid:
         """Compute the magnitude of thermal gradient at each cell.
 
         High gradients indicate warping risk.
+        Uses effective grid (with layer history) for analysis.
         """
-        xp = self.xp
-        gy, gx = xp.gradient(self.grid, self.config.resolution)
-        return xp.sqrt(gx**2 + gy**2)
+        grid_np = self.get_effective_grid()
+        gy, gx = np.gradient(grid_np, self.config.resolution)
+        return np.sqrt(gx**2 + gy**2)
 
     def get_max_gradient(self) -> float:
         """Return the maximum thermal gradient magnitude."""
         grad = self.get_thermal_gradient()
-        return float(self.xp.max(grad))
+        return float(np.max(grad))
 
     def get_heatmap(self) -> np.ndarray:
         """Return the current temperature grid as numpy array."""

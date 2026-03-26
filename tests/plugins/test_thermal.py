@@ -294,8 +294,9 @@ class TestLayerHistory:
         grid.grid[25, 25] = 100.0
         val_before = float(grid.grid[25, 25])
         grid.advance_layer()
-        # Now previous layer's heat should boost current
-        assert grid.grid[25, 25] > val_before
+        # Now previous layer's heat should boost the effective grid
+        effective = grid.get_effective_grid()
+        assert effective[25, 25] > val_before
 
     def test_z_history_catches_tall_features(self):
         config = ThermalConfig(bed_x=50, bed_y=50, resolution=1.0)
@@ -304,8 +305,9 @@ class TestLayerHistory:
         for _ in range(5):
             grid.grid[25, 25] = 80.0
             grid.advance_layer()
-        # Accumulated heat should be higher than a single layer
-        assert grid.grid[25, 25] > 80.0
+        # Accumulated effective heat should be higher than a single layer
+        effective = grid.get_effective_grid()
+        assert effective[25, 25] > 80.0
 
     def test_layer_history_max_size(self):
         config = ThermalConfig(bed_x=50, bed_y=50, resolution=1.0)

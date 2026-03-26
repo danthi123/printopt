@@ -32,10 +32,11 @@ class FlowPlugin(Plugin):
         self._previous_state: str = "standby"
         self._log: list[dict] = []
         self._current_filename: str = ""
-        self._compensated_lines: set[int] = set()
+        self._compensated_lines: set[tuple[int, str]] = set()
         self._schedule: dict[int, list[Compensation]] = {}
         self._scheduled_lines: list[int] = []
         self._schedule_idx: int = 0
+        self._needs_restore: bool = False
 
     async def on_start(self) -> None:
         logger.info("Flow compensation plugin started")
@@ -50,7 +51,8 @@ class FlowPlugin(Plugin):
         self._current_progress = 0
         self._current_filename = filename
         self._log = []
-        self._compensated_lines = set()
+        self._compensated_lines: set[tuple[int, str]] = set()
+        self._needs_restore = False
 
         # Pre-compute all compensations indexed by line number
         self._schedule = {}
@@ -90,6 +92,21 @@ class FlowPlugin(Plugin):
             await self._apply_compensations()
 
     async def _apply_compensations(self) -> None:
+        # Kill switch restore: send reset commands if pending
+        if self._needs_restore and self._moonraker:
+            self._needs_restore = False
+            try:
+                await self._moonraker.inject("M220 S100")
+                await self._moonraker.inject("M221 S100")
+                await self._moonraker.inject(
+                    f"SET_PRESSURE_ADVANCE ADVANCE={self.compensator.baseline_pa:.4f}"
+                )
+            except Exception:
+                pass
+
+        if self._schedule_idx >= len(self._scheduled_lines):
+            return  # All compensations applied or schedule empty
+
         if not self.parse_result or not self._scheduled_lines:
             # Fall back: also apply thermal adjustments even without schedule
             if self.parse_result and self._thermal_plugin:
@@ -118,10 +135,21 @@ class FlowPlugin(Plugin):
                 continue
 
             comps = self._schedule[sched_line]
+            # Skip M220/M221 if thermal plugin is actively managing them
+            thermal = self._thermal_plugin
+            thermal_has_speed = thermal and hasattr(thermal, '_speed_adjusted') and thermal._speed_adjusted
+            thermal_has_fan = thermal and hasattr(thermal, '_fan_adjusted') and thermal._fan_adjusted
+
             for comp in comps:
-                if comp.line_number in self._compensated_lines:
+                comp_key = (comp.line_number, comp.value)
+                if comp_key in self._compensated_lines:
                     continue
-                self._compensated_lines.add(comp.line_number)
+                # Defer to thermal plugin when it has active adjustments
+                if comp.type == "M220" and thermal_has_speed:
+                    continue
+                if comp.type in ("M221", "SET_FAN_SPEED") and thermal_has_fan:
+                    continue
+                self._compensated_lines.add(comp_key)
                 if self._moonraker and not self._kill:
                     try:
                         await self._inject_with_retry(comp.value)
@@ -205,8 +233,9 @@ class FlowPlugin(Plugin):
                         estimated_time=move.cumulative_time,
                     )
                     if self._moonraker and not self._kill:
-                        if comp.line_number not in self._compensated_lines:
-                            self._compensated_lines.add(comp.line_number)
+                        comp_key = (comp.line_number, comp.value)
+                        if comp_key not in self._compensated_lines:
+                            self._compensated_lines.add(comp_key)
                             try:
                                 await self._inject_with_retry(comp.value)
                                 self.total_adjustments += 1
@@ -250,6 +279,7 @@ class FlowPlugin(Plugin):
 
     def kill(self) -> None:
         self._kill = True
+        self._needs_restore = True
         self.active_compensations = []
         logger.warning("Flow compensation killed")
 
