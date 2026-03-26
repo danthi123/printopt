@@ -1,4 +1,3 @@
-var statusEl = document.getElementById('connection-status');
 var printerEl = document.getElementById('printer-status');
 var pluginEl = document.getElementById('plugin-list');
 var ws = null;
@@ -7,13 +6,8 @@ var latestData = {};
 function connect() {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(proto + '//' + location.host + '/ws');
-    ws.onopen = function() {
-        statusEl.textContent = 'connected';
-        statusEl.classList.add('connected');
-    };
+    ws.onopen = function() {};
     ws.onclose = function() {
-        statusEl.textContent = 'disconnected';
-        statusEl.classList.remove('connected');
         setTimeout(connect, 2000);
     };
     ws.onmessage = function(event) {
@@ -34,17 +28,17 @@ function formatDuration(seconds) {
 }
 
 function updatePrinter(printer) {
-    // Sync connection toggle button
-    var connBtn = document.getElementById('btn-connection-toggle');
-    if (connBtn) {
+    // Sync connection indicator
+    var connInd = document.getElementById('connection-indicator');
+    if (connInd) {
         if (printer.connected) {
-            connBtn.classList.remove('action-off');
-            connBtn.classList.add('action-on');
-            connBtn.textContent = 'Connected';
+            connInd.classList.remove('action-off');
+            connInd.classList.add('action-on');
+            connInd.textContent = 'Connected';
         } else {
-            connBtn.classList.remove('action-on');
-            connBtn.classList.add('action-off');
-            connBtn.textContent = 'Disconnected';
+            connInd.classList.remove('action-on');
+            connInd.classList.add('action-off');
+            connInd.textContent = 'Disconnected';
         }
     }
     var s = printer.status || {};
@@ -520,20 +514,6 @@ function drawToolpath(segments, bedX, bedY, nozzlePos) {
     ctx.strokeRect(legendX, legendTop, legendW, legendH);
 }
 
-function toggleConnection(btn) {
-    var isConnected = btn.classList.contains('action-on');
-    if (isConnected) {
-        sendAction('disconnect_printer');
-        btn.classList.remove('action-on');
-        btn.classList.add('action-off');
-        btn.textContent = 'Disconnected';
-    } else {
-        sendAction('connect_printer');
-        btn.classList.remove('action-off');
-        btn.classList.add('action-on');
-        btn.textContent = 'Connecting...';
-    }
-}
 
 function killAll() {
     if (ws && ws.readyState === WebSocket.OPEN) {

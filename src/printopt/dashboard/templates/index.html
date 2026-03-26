@@ -9,7 +9,6 @@
 <body>
     <header>
         <h1>printopt</h1>
-        <span id="connection-status">disconnected</span>
     </header>
     <div id="layout">
         <aside id="sidebar">
@@ -35,7 +34,7 @@
                             <input type="number" id="setting-printer-port" value="7125" min="1" max="65535">
                         </div>
                         <div class="setting-row">
-                            <button class="action-btn action-on" id="btn-connection-toggle">Connected</button>
+                            <span class="status-badge action-on" id="connection-indicator">Connected</span>
                         </div>
                     </div>
                     <div class="settings-section">
@@ -140,7 +139,6 @@
         else if (id === 'btn-flow-toggle') { togglePlugin('flow', t); }
         else if (id === 'btn-thermal-toggle') { togglePlugin('thermal', t); }
         else if (id === 'btn-save-settings') { saveSettings(); }
-        else if (id === 'btn-connection-toggle') { toggleConnection(t); }
     });
     </script>
 </body>

@@ -2,8 +2,9 @@
 body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; }
 header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: #16213e; }
 header h1 { font-size: 18px; }
-#connection-status { font-size: 12px; padding: 4px 8px; border-radius: 4px; background: #c0392b; }
-#connection-status.connected { background: #27ae60; }
+.status-badge { font-size: 12px; padding: 4px 12px; border-radius: 4px; font-family: inherit; }
+.status-badge.action-on { background: #27ae60; color: white; }
+.status-badge.action-off { background: #c0392b; color: white; }
 #layout { display: flex; height: calc(100vh - 100px); }
 #sidebar { width: 260px; padding: 16px; background: #0f3460; overflow-y: auto; flex-shrink: 0; }
 #sidebar h3 { margin: 12px 0 6px; font-size: 13px; text-transform: uppercase; color: #888; }
