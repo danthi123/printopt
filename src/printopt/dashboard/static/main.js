@@ -1,10 +1,7 @@
 var statusEl = document.getElementById('connection-status');
 var printerEl = document.getElementById('printer-status');
 var pluginEl = document.getElementById('plugin-list');
-var panels = document.querySelectorAll('.plugin-panel');
-
 var ws = null;
-var activePlugin = null;
 var latestData = {};
 
 function connect() {
@@ -23,7 +20,7 @@ function connect() {
         latestData = JSON.parse(event.data);
         if (latestData.printer) updatePrinter(latestData.printer);
         if (latestData.plugins) updatePlugins(latestData.plugins);
-        updateActivePanel();
+        updateAllPanels();
     };
 }
 
@@ -60,47 +57,26 @@ function updatePrinter(printer) {
 }
 
 function updatePlugins(plugins) {
-    // Clear and rebuild plugin list
     while (pluginEl.firstChild) pluginEl.removeChild(pluginEl.firstChild);
-
     var names = Object.keys(plugins);
     if (names.length === 0) {
         pluginEl.textContent = 'No plugins active';
         return;
     }
-
     names.forEach(function(name) {
         var div = document.createElement('div');
-        div.className = 'plugin-item' + (activePlugin === name ? ' active' : '');
+        div.className = 'plugin-item';
         var indicator = plugins[name].enabled ? '[ON]  ' : '[OFF] ';
         div.textContent = indicator + name;
-        div.addEventListener('click', function() { selectPlugin(name); });
         pluginEl.appendChild(div);
     });
 }
 
-function selectPlugin(name) {
-    activePlugin = name;
-    panels.forEach(function(p) { p.style.display = 'none'; });
-    var panel = document.getElementById('panel-' + name);
-    if (panel) {
-        panel.style.display = 'block';
-    } else {
-        document.getElementById('panel-none').style.display = 'block';
-    }
-    // Re-render plugin list to show active state
-    if (latestData.plugins) updatePlugins(latestData.plugins);
-    updateActivePanel();
-}
-
-function updateActivePanel() {
-    if (!activePlugin || !latestData.plugins) return;
-    var data = latestData.plugins[activePlugin];
-    if (!data) return;
-
-    if (activePlugin === 'vibration') updateVibrationPanel(data);
-    if (activePlugin === 'flow') updateFlowPanel(data);
-    if (activePlugin === 'thermal') updateThermalPanel(data);
+function updateAllPanels() {
+    if (!latestData.plugins) return;
+    if (latestData.plugins.vibration) updateVibrationPanel(latestData.plugins.vibration);
+    if (latestData.plugins.flow) updateFlowPanel(latestData.plugins.flow);
+    if (latestData.plugins.thermal) updateThermalPanel(latestData.plugins.thermal);
 }
 
 function updateVibrationPanel(data) {

@@ -19,8 +19,7 @@
             <div id="plugin-list"></div>
         </aside>
         <main id="main-panel">
-            <div id="plugin-tabs"></div>
-            <div id="panel-vibration" class="plugin-panel" style="display:none">
+            <div id="panel-vibration" class="plugin-panel">
                 <h2>Vibration Analysis</h2>
                 <div class="panel-actions">
                     <button class="action-btn" id="btn-vib-analyze">Run Analysis</button>
@@ -28,7 +27,8 @@
                 <div id="vib-status">No analysis data yet.</div>
                 <canvas id="vib-canvas" width="800" height="400"></canvas>
             </div>
-            <div id="panel-flow" class="plugin-panel" style="display:none">
+            <div class="panel-divider"></div>
+            <div id="panel-flow" class="plugin-panel">
                 <h2>Flow Compensation</h2>
                 <div class="panel-actions">
                     <button class="action-btn action-on" id="btn-flow-enable">Enable</button>
@@ -38,7 +38,8 @@
                 <div id="flow-timeline"></div>
                 <div id="flow-log"></div>
             </div>
-            <div id="panel-thermal" class="plugin-panel" style="display:none">
+            <div class="panel-divider"></div>
+            <div id="panel-thermal" class="plugin-panel">
                 <h2>Thermal Simulation</h2>
                 <div class="panel-actions">
                     <button class="action-btn action-on" id="btn-thermal-enable">Enable</button>
@@ -47,9 +48,6 @@
                 <div id="thermal-stats"></div>
                 <canvas id="thermal-canvas" width="800" height="800"></canvas>
                 <div id="thermal-warnings"></div>
-            </div>
-            <div id="panel-none" class="plugin-panel">
-                <p>Select a plugin from the sidebar to view its dashboard.</p>
             </div>
         </main>
     </div>
