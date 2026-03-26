@@ -243,34 +243,6 @@ async def fetch_raw_accel_csv(client: MoonrakerClient, axis: str) -> str:
     return result.stdout
 
 
-async def fetch_accel_csv(
-    client: MoonrakerClient,
-    filename_prefix: str,
-) -> AccelData:
-    """Fetch accelerometer CSV data from the printer.
-
-    Klipper saves CSVs to /tmp/. We retrieve them via Moonraker's
-    file download endpoint or direct HTTP.
-    """
-    axis = filename_prefix.split("_")[-1]
-
-    # Use Moonraker's HTTP API to list and download the file
-    # Files are at http://<host>:<port>/server/files/gcodes/ but
-    # /tmp/ files need the machine endpoint
-    url = f"http://{client.host}:{client.port}/machine/proc_stats"
-
-    # For now, use the shell command API to find and cat the file
-    # In production, we'd use Moonraker's file transfer API
-    result = await client.query(
-        "machine.proc_stats"
-    )
-
-    # Try to read the CSV via shell command
-    # Klipper's resonance tester saves to /tmp/resonances_*.csv
-    logger.info(f"Fetching accelerometer data for {axis} axis...")
-
-    return AccelData(axis=axis, sample_rate=3200.0)
-
 
 def parse_accel_csv(csv_text: str, axis: str = "x") -> AccelData:
     """Parse Klipper's accelerometer CSV format.

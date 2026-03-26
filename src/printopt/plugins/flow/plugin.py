@@ -104,13 +104,14 @@ class FlowPlugin(Plugin):
             except Exception:
                 pass
 
+        # Always apply thermal adjustments when thermal plugin is active
+        if self._thermal_plugin and self.parse_result:
+            await self._apply_thermal_compensations()
+
         if self._schedule_idx >= len(self._scheduled_lines):
             return  # All compensations applied or schedule empty
 
         if not self.parse_result or not self._scheduled_lines:
-            # Fall back: also apply thermal adjustments even without schedule
-            if self.parse_result and self._thermal_plugin:
-                await self._apply_thermal_compensations()
             return
 
         total_moves = len(self.parse_result.moves)
@@ -273,6 +274,7 @@ class FlowPlugin(Plugin):
         logger.info("Print ended. Total adjustments made: %d", self.total_adjustments)
         self.parse_result = None
         self.active_compensations = []
+        self._needs_restore = False
 
     async def on_stop(self) -> None:
         pass
