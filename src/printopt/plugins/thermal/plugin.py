@@ -309,43 +309,31 @@ class ThermalPlugin(Plugin):
         current_layer = 0
         prev_x, prev_y = 0.0, 0.0
 
-        # Use sequential layer numbering based on increasing Z heights only
-        # (skip Z-hops which go up temporarily and come back down)
-        z_to_seq: dict[float, int] = {}
-        seq = 0
-        max_z = 0.0
-        self._layer_z_values: list[tuple[float, int]] = []
-        for f in self.parse_result.features:
-            if f.type == FeatureType.LAYER_CHANGE:
-                z = round(f.metadata.get("z", 0), 2)
-                if z > max_z:  # Only count real layer advances, not Z-hops
-                    max_z = z
-                    if z not in z_to_seq:
-                        seq += 1
-                        z_to_seq[z] = seq
-                        self._layer_z_values.append((z, seq))
-        self._layer_z_values.sort()
+        # Group segments by Z value of the extrusion move
+        # This naturally handles variable layer heights and skips Z-hops
+        # (Z-hop moves are travel moves, not extrusions)
+        self._layer_z_values = []  # (z, layer_key) for bisect lookup
 
-        # Map line numbers to sequential layer numbers
-        layer_lines: dict[int, int] = {}
-        for f in self.parse_result.features:
-            if f.type == FeatureType.LAYER_CHANGE:
-                z = round(f.metadata.get("z", 0), 2)
-                layer_lines[f.line_number] = z_to_seq.get(z, 0)
-
-        logger.info("Layer Z mapping: %d unique Z heights, seq 1-%d", len(z_to_seq), seq)
+        z_to_key: dict[float, int] = {}
+        key_counter = 0
 
         for move in self.parse_result.moves:
-            if move.line_number in layer_lines:
-                current_layer = layer_lines[move.line_number]
-
             if move.is_extrusion and move.distance > 0.3:
+                z_rounded = round(move.z, 2)
+                if z_rounded not in z_to_key:
+                    key_counter += 1
+                    z_to_key[z_rounded] = key_counter
+                    self._layer_z_values.append((z_rounded, key_counter))
+                layer_key = z_to_key[z_rounded]
                 seg = (round(prev_x, 1), round(prev_y, 1),
                        round(move.x, 1), round(move.y, 1))
-                layers.setdefault(current_layer, []).append(seg)
+                layers.setdefault(layer_key, []).append(seg)
 
             prev_x, prev_y = move.x, move.y
 
+        self._layer_z_values.sort()
+        logger.info("Layer index: %d layers from extrusion Z values (1-%d)",
+                     len(z_to_key), key_counter)
         return layers
 
     def _rebuild_toolpath_from_gcode(self) -> None:
