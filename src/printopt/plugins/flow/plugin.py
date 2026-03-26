@@ -32,6 +32,7 @@ class FlowPlugin(Plugin):
         self._previous_state: str = "standby"
         self._log: list[dict] = []
         self._current_filename: str = ""
+        self._compensated_lines: set[int] = set()
 
     async def on_start(self) -> None:
         logger.info("Flow compensation plugin started")
@@ -46,6 +47,7 @@ class FlowPlugin(Plugin):
         self._current_progress = 0
         self._current_filename = filename
         self._log = []
+        self._compensated_lines = set()
         logger.info(
             "Parsed %s: %d moves, %d features, %.1fs estimated",
             filename, len(self.parse_result.moves),
@@ -73,17 +75,36 @@ class FlowPlugin(Plugin):
             await self._apply_compensations()
 
     async def _apply_compensations(self) -> None:
-        if not self.parse_result or self.parse_result.total_time <= 0:
+        if not self.parse_result or not self.parse_result.features:
             return
 
-        # Estimate current time in the gcode based on progress
-        current_time = self._current_progress / 100.0 * self.parse_result.total_time
+        # Map progress (0-100%) to approximate move index in the gcode.
+        # Moonraker progress is file-position-based (bytes), which is roughly
+        # proportional to line count, not time.
+        total_moves = len(self.parse_result.moves)
+        if total_moves == 0:
+            return
 
-        compensations = self.compensator.compute_compensations(
-            self.parse_result.features,
-            current_time=current_time,
-            lookahead_seconds=5.0,
-        )
+        current_move_idx = int(self._current_progress / 100.0 * total_moves)
+
+        # Find the current line number from the move index
+        if current_move_idx < total_moves:
+            current_line = self.parse_result.moves[current_move_idx].line_number
+        else:
+            current_line = self.parse_result.moves[-1].line_number
+
+        # Lookahead: find features within the next N lines
+        lookahead_lines = 500  # ~5 seconds of gcode at typical speeds
+
+        compensations = []
+        for feature in self.parse_result.features:
+            if feature.line_number < current_line:
+                continue
+            if feature.line_number > current_line + lookahead_lines:
+                break
+
+            comps = self.compensator._compensate_feature(feature)
+            compensations.extend(comps)
 
         # Apply thermal adjustments if available
         if self._thermal_plugin and self._thermal_plugin.grid:
@@ -94,35 +115,47 @@ class FlowPlugin(Plugin):
             heatmap = self._thermal_plugin.grid.get_heatmap()
             resolution = self._thermal_plugin.grid.config.resolution
 
-            # Check thermal state at upcoming positions
-            if self.parse_result:
-                current_idx = int(self._current_progress / 100.0 * len(self.parse_result.moves))
-                lookahead_moves = self.parse_result.moves[current_idx:current_idx+20]
-                for move in lookahead_moves:
-                    if move.is_extrusion:
-                        tc = bridge.evaluate_position(heatmap, move.x, move.y, resolution)
-                        if tc.speed_factor != 1.0:
-                            # Only add thermal compensation if significant
-                            compensations.append(Compensation(
-                                type="M220",
-                                value=f"M220 S{int(tc.speed_factor * 100)}",
-                                feature_type=FeatureType.LAYER_CHANGE,
-                                line_number=move.line_number,
-                                estimated_time=move.cumulative_time,
-                            ))
-                            break  # One thermal adjustment per cycle
+            lookahead_moves = self.parse_result.moves[current_move_idx:current_move_idx+20]
+            for move in lookahead_moves:
+                if move.is_extrusion:
+                    tc = bridge.evaluate_position(heatmap, move.x, move.y, resolution)
+                    if tc.speed_factor != 1.0:
+                        compensations.append(Compensation(
+                            type="M220",
+                            value=f"M220 S{int(tc.speed_factor * 100)}",
+                            feature_type=FeatureType.LAYER_CHANGE,
+                            line_number=move.line_number,
+                            estimated_time=move.cumulative_time,
+                        ))
+                        break  # One thermal adjustment per cycle
 
         self.active_compensations = compensations
 
         # Inject compensations via Moonraker if available
-        if self._moonraker and compensations:
+        if self._moonraker and compensations and not self._kill:
             for comp in compensations:
+                if comp.line_number in self._compensated_lines:
+                    continue
+                self._compensated_lines.add(comp.line_number)
                 try:
-                    await self._moonraker.inject(comp.value)
+                    await self._inject_with_retry(comp.value)
                     self.total_adjustments += 1
                     self._log_entry(comp)
                 except Exception as e:
-                    logger.warning("Failed to inject compensation: %s", e)
+                    logger.warning("Failed to inject compensation after retries: %s", e)
+
+    async def _inject_with_retry(self, gcode: str, max_retries: int = 3) -> None:
+        """Inject gcode with retry on timeout."""
+        for attempt in range(max_retries):
+            try:
+                await self._moonraker.inject(gcode)
+                return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.debug("Inject retry %d for '%s': %s", attempt + 1, gcode, e)
+                    await asyncio.sleep(0.5)
+                else:
+                    raise
 
     def _log_entry(self, comp: Compensation) -> None:
         entry = {
@@ -150,16 +183,20 @@ class FlowPlugin(Plugin):
         logger.warning("Flow compensation killed")
 
     def get_dashboard_data(self) -> dict:
+        features_ahead = 0
+        if self.parse_result and self.parse_result.moves:
+            total_moves = len(self.parse_result.moves)
+            current_idx = int(self._current_progress / 100.0 * total_moves)
+            current_line = self.parse_result.moves[min(current_idx, total_moves - 1)].line_number
+            features_ahead = sum(1 for f in self.parse_result.features if f.line_number > current_line)
+
         return {
             "enabled": self.enabled and not self._kill,
             "total_adjustments": self.total_adjustments,
             "active_compensations": [
                 {"type": c.type, "value": c.value} for c in self.active_compensations
             ],
-            "features_ahead": (
-                len([f for f in (self.parse_result.features if self.parse_result else [])
-                     if f.estimated_time > (self._current_progress / 100.0 * (self.parse_result.total_time if self.parse_result else 1))])
-            ),
+            "features_ahead": features_ahead,
             "state": self._print_state,
             "filename": self._current_filename,
             "progress": self._current_progress,

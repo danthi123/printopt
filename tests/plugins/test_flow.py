@@ -60,6 +60,61 @@ class TestFlowPlugin:
         assert "log" in data
         assert "state" in data
 
+    @pytest.mark.asyncio
+    async def test_line_based_compensation(self):
+        plugin = FlowPlugin()
+        gcode = "G1 Z0.2 F3000\nG1 X10 Y10 E0.5 F1500\nG1 X50 Y10 E2.0\nG1 X50 Y50 E4.0\nG1 X10 Y50 E6.0\nG1 X10 Y10 E8.0"
+        await plugin.on_print_start("test.gcode", gcode)
+        # Simulate 50% progress
+        await plugin.on_status_update({"state": "printing", "progress": 50.0, "filename": "test.gcode"})
+        data = plugin.get_dashboard_data()
+        assert data["features_ahead"] >= 0
+        assert data["state"] == "printing"
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_compensations(self):
+        plugin = FlowPlugin()
+        gcode = "G1 Z0.2 F3000\nG1 X10 Y10 E0.5 F1500\nG1 X50 Y10 E2.0\nG1 X50 Y50 E4.0"
+        await plugin.on_print_start("test.gcode", gcode)
+        plugin._current_progress = 10.0
+        plugin._print_state = "printing"
+        await plugin._apply_compensations()
+        first_count = plugin.total_adjustments
+        # Apply again at same progress — should not add duplicates
+        await plugin._apply_compensations()
+        assert plugin.total_adjustments == first_count
+
+    @pytest.mark.asyncio
+    async def test_inject_with_retry(self):
+        """Test that injection retries on failure."""
+        plugin = FlowPlugin()
+
+        call_count = 0
+
+        class MockMoonraker:
+            async def inject(self, gcode):
+                nonlocal call_count
+                call_count += 1
+                if call_count < 3:
+                    raise TimeoutError("timeout")
+
+        plugin._moonraker = MockMoonraker()
+        await plugin._inject_with_retry("G1 X10")
+        assert call_count == 3  # failed twice, succeeded on third
+
+    @pytest.mark.asyncio
+    async def test_inject_with_retry_gives_up(self):
+        """Test that injection raises after max retries."""
+        plugin = FlowPlugin()
+
+        class MockMoonraker:
+            async def inject(self, gcode):
+                raise TimeoutError("timeout")
+
+        plugin._moonraker = MockMoonraker()
+        with pytest.raises(TimeoutError):
+            await plugin._inject_with_retry("G1 X10", max_retries=2)
+
 
 class TestFlowCompensator:
     def test_corner_compensation(self):
