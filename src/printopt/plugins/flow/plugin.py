@@ -124,7 +124,9 @@ class FlowPlugin(Plugin):
         ].line_number
 
         # Inject all scheduled compensations up to current line + lookahead
-        lookahead_lines = 200
+        # Scale lookahead with file size — larger files need more lookahead
+        # because progress % maps to larger line number ranges
+        lookahead_lines = max(500, total_moves // 100)
 
         skipped = 0
         while self._schedule_idx < len(self._scheduled_lines):
@@ -164,8 +166,9 @@ class FlowPlugin(Plugin):
             self._schedule_idx += 1
 
         if skipped > 0:
-            logger.info("Skipped %d past schedule entries, idx now %d/%d, current_line=%d",
-                        skipped, self._schedule_idx, len(self._scheduled_lines), current_line)
+            logger.info("Skipped %d past entries, idx=%d/%d, line=%d, lookahead=%d",
+                        skipped, self._schedule_idx, len(self._scheduled_lines),
+                        current_line, lookahead_lines)
 
         # Apply thermal adjustments if available
         if self._thermal_plugin:
