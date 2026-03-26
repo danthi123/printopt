@@ -106,22 +106,20 @@ class ThermalPlugin(Plugin):
         if self._nozzle_temp > 0:
             self.grid.nozzle_temp = self._nozzle_temp
 
-        # Calculate layer from Z position using gcode's actual layer Z values
+        # Find current gcode layer from Z position
         z_values = getattr(self, '_layer_z_values', [])
         if z_values:
-            # Binary search for the closest layer at or below current Z
             import bisect
             idx = bisect.bisect_right([z for z, _ in z_values], new_z + 0.05) - 1
             if idx >= 0:
-                estimated_layer = z_values[idx][1]
+                gcode_layer = z_values[idx][1]
             else:
-                estimated_layer = 0
+                gcode_layer = z_values[0][1] if z_values else 0
         else:
-            # Fallback: assume 0.2mm layers
-            estimated_layer = max(0, int(new_z / 0.2))
+            gcode_layer = max(0, int(new_z / 0.2))
 
-        if estimated_layer > self.current_layer:
-            self.current_layer = estimated_layer
+        if gcode_layer != self.current_layer:
+            self.current_layer = gcode_layer
             await self.on_layer(self.current_layer, new_z)
 
         # Calculate time delta
@@ -321,6 +319,10 @@ class ThermalPlugin(Plugin):
                 layer_lines[f.line_number] = layer_num
                 self._layer_z_values.append((z, layer_num))
         self._layer_z_values.sort()
+        if self._layer_z_values:
+            logger.info("Layer Z range: first=(z=%.2f, layer=%d), last=(z=%.2f, layer=%d)",
+                        self._layer_z_values[0][0], self._layer_z_values[0][1],
+                        self._layer_z_values[-1][0], self._layer_z_values[-1][1])
 
         for move in self.parse_result.moves:
             # Check if this move crosses a layer change
