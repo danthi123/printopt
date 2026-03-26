@@ -29,6 +29,7 @@ def get_config_dir() -> Path:
 
 async def do_connect(
     host: str,
+    name: Optional[str] = None,
     config_dir: Optional[Path] = None,
     _client: Optional[MoonrakerClient] = None,
 ) -> PrinterConfig:
@@ -36,6 +37,7 @@ async def do_connect(
 
     Args:
         host: Printer IP or hostname.
+        name: Optional printer profile name; defaults to IP with dots replaced by dashes.
         config_dir: Directory to save config into; defaults to ~/.config/printopt.
         _client: Optional pre-built client (for testing).
 
@@ -44,6 +46,8 @@ async def do_connect(
     """
     if config_dir is None:
         config_dir = get_config_dir()
+
+    name = name or host.replace(".", "-")
 
     own_client = _client is None
     client = _client or MoonrakerClient(host)
@@ -55,6 +59,11 @@ async def do_connect(
         config = await discover_printer(client)
 
         config_dir.mkdir(parents=True, exist_ok=True)
+        printers_dir = config_dir / "printers"
+        printers_dir.mkdir(parents=True, exist_ok=True)
+        config.save(printers_dir / f"{name}.json")
+
+        # Also save as default if it's the only one or first one
         config.save(config_dir / "printer.json")
 
         return config
@@ -390,12 +399,30 @@ async def do_run(
     plugins: str = "all",
     port: int = 8484,
     profile: str | None = None,
+    printer_name: str | None = None,
     config_dir: Path | None = None,
     _client: Any = None,
 ) -> None:
     """Start the optimization daemon with dashboard."""
     config_dir = config_dir or get_config_dir()
-    config_path = config_dir / "printer.json"
+
+    if printer_name:
+        config_path = config_dir / "printers" / f"{printer_name}.json"
+    else:
+        config_path = config_dir / "printer.json"
+        if not config_path.exists():
+            # Check printers dir for a single printer
+            printers_dir = config_dir / "printers"
+            if printers_dir.exists():
+                printers = list(printers_dir.glob("*.json"))
+                if len(printers) == 1:
+                    config_path = printers[0]
+                elif len(printers) > 1:
+                    print("Multiple printers configured. Specify one with --printer:")
+                    for p in printers:
+                        print(f"  {p.stem}")
+                    sys.exit(1)
+
     if not config_path.exists():
         print("No printer configured. Run 'printopt connect <host>' first.")
         sys.exit(1)
@@ -658,6 +685,26 @@ def do_profile_create(
     return path
 
 
+def do_printer_list(config_dir: Path | None = None) -> None:
+    """List all configured printer profiles."""
+    config_dir = config_dir or get_config_dir()
+    printers_dir = config_dir / "printers"
+    if not printers_dir.exists():
+        print("No printers configured. Run 'printopt connect <host>' first.")
+        return
+    printers = sorted(printers_dir.glob("*.json"))
+    if not printers:
+        print("No printers configured. Run 'printopt connect <host>' first.")
+        return
+    for p in printers:
+        try:
+            config = PrinterConfig.load(p)
+            print(f"  {p.stem:<20s} {config.host:<16s} {config.kinematics} "
+                  f"{config.bed_x:.0f}x{config.bed_y:.0f}x{config.bed_z:.0f}")
+        except Exception:
+            print(f"  {p.stem:<20s} (invalid config)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="printopt",
@@ -667,11 +714,13 @@ def main() -> None:
 
     connect_parser = subparsers.add_parser("connect", help="Connect to a printer")
     connect_parser.add_argument("host", help="Printer IP or hostname")
+    connect_parser.add_argument("--name", default=None, help="Printer name (default: IP address)")
 
     run_parser = subparsers.add_parser("run", help="Start optimization daemon")
     run_parser.add_argument("--plugins", default="all", help="Comma-separated plugin list or 'all'")
     run_parser.add_argument("--port", type=int, default=8484, help="Dashboard port")
     run_parser.add_argument("--profile", default=None, help="Filament profile name")
+    run_parser.add_argument("--printer", default=None, help="Printer name (from 'printopt connect --name')")
 
     vib_parser = subparsers.add_parser("vibration", help="Vibration analysis")
     vib_sub = vib_parser.add_subparsers(dest="vib_command")
@@ -686,13 +735,17 @@ def main() -> None:
     create = prof_sub.add_parser("create", help="Create a new profile")
     create.add_argument("name", help="Profile name")
 
+    printer_parser = subparsers.add_parser("printer", help="Manage printers")
+    printer_sub = printer_parser.add_subparsers(dest="printer_command")
+    printer_sub.add_parser("list", help="List configured printers")
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
     if args.command == "connect":
-        config = asyncio.run(do_connect(args.host))
+        config = asyncio.run(do_connect(args.host, name=args.name))
         print(f"Connected to {config.host} ({config.kinematics}, "
               f"bed {config.bed_x}x{config.bed_y}x{config.bed_z})")
         return
@@ -702,6 +755,7 @@ def main() -> None:
             plugins=args.plugins,
             port=args.port,
             profile=args.profile,
+            printer_name=args.printer,
         ))
         return
 
@@ -718,6 +772,14 @@ def main() -> None:
             do_profile_create(args.name)
             return
         print("Usage: printopt profile {list,create}")
+        sys.exit(1)
+
+    if args.command == "printer":
+        sub = getattr(args, "printer_command", None)
+        if sub == "list":
+            do_printer_list()
+            return
+        print("Usage: printopt printer {list}")
         sys.exit(1)
 
     print(f"printopt: {args.command} (not yet implemented)")

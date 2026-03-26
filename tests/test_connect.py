@@ -41,10 +41,30 @@ def test_connect_saves_config(tmp_path):
     assert config.bed_x == 245
     assert config.host == "192.168.0.248"
 
-    # Verify saved to disk
+    # Verify saved to disk (both default and printers subdir)
     saved = PrinterConfig.load(tmp_path / "printer.json")
     assert saved.host == "192.168.0.248"
     assert saved.bed_x == 245
+
+    # Verify saved to printers subdir with default name
+    saved_named = PrinterConfig.load(tmp_path / "printers" / "192-168-0-248.json")
+    assert saved_named.host == "192.168.0.248"
+
+
+def test_connect_with_name(tmp_path):
+    """Connect with --name should save to printers/<name>.json."""
+    from printopt.cli import do_connect
+
+    mock_client = AsyncMock()
+    mock_client.host = "192.168.0.248"
+    mock_client.query = AsyncMock(side_effect=[MOCK_SERVER_INFO, MOCK_PRINTER_CONFIG])
+
+    config = asyncio.run(do_connect("192.168.0.248", name="myprinter", config_dir=tmp_path, _client=mock_client))
+
+    assert config.host == "192.168.0.248"
+    assert (tmp_path / "printers" / "myprinter.json").exists()
+    saved = PrinterConfig.load(tmp_path / "printers" / "myprinter.json")
+    assert saved.host == "192.168.0.248"
 
 
 def test_connect_creates_config_dir(tmp_path):
@@ -59,3 +79,4 @@ def test_connect_creates_config_dir(tmp_path):
     config = asyncio.run(do_connect("192.168.0.248", config_dir=config_dir, _client=mock_client))
     assert config_dir.exists()
     assert (config_dir / "printer.json").exists()
+    assert (config_dir / "printers").exists()
