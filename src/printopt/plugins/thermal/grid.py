@@ -37,7 +37,7 @@ class ThermalConfig:
     # Cooling coefficients
     convection_base: float = 10.0  # W/(m2*K) base convection
     fan_convection_factor: float = 30.0  # additional W/(m2*K) at 100% fan
-    use_gpu: bool = False  # Use cupy for GPU acceleration if available
+    use_gpu: bool = True  # Auto-detect: uses GPU if cupy installed, falls back to CPU
 
 
 class ThermalGrid:

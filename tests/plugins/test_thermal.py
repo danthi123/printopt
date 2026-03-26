@@ -22,7 +22,7 @@ class TestThermalGrid:
 
     def test_deposit_heat(self):
         grid = ThermalGrid()
-        initial_temp = grid.grid[120, 120]
+        initial_temp = float(grid.grid[120, 120])
         grid.deposit_heat(120.0, 120.0, flow_rate=5.0, dt=1.0)
         assert grid.grid[120, 120] > initial_temp
 
@@ -37,7 +37,7 @@ class TestThermalGrid:
         grid = ThermalGrid(config)
         # Heat a spot
         grid.grid[25, 25] = 200.0
-        hot_before = grid.grid[25, 25]
+        hot_before = float(grid.grid[25, 25])
         grid.step(1.0)
         # Should cool down
         assert grid.grid[25, 25] < hot_before
@@ -46,7 +46,7 @@ class TestThermalGrid:
         config = ThermalConfig(bed_x=50, bed_y=50, resolution=1.0)
         grid = ThermalGrid(config)
         grid.grid[25, 25] = 200.0
-        neighbor_before = grid.grid[25, 26]
+        neighbor_before = float(grid.grid[25, 26])
         grid.step(1.0)
         # Neighbor should warm up
         assert grid.grid[25, 26] > neighbor_before
