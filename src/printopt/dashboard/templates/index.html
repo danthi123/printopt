@@ -35,8 +35,7 @@
                             <input type="number" id="setting-printer-port" value="7125" min="1" max="65535">
                         </div>
                         <div class="setting-row">
-                            <button class="action-btn" id="btn-connect">Connect</button>
-                            <button class="action-btn action-off" id="btn-disconnect">Disconnect</button>
+                            <button class="action-btn action-on" id="btn-connection-toggle">Connected</button>
                         </div>
                     </div>
                     <div class="settings-section">
@@ -141,8 +140,7 @@
         else if (id === 'btn-flow-toggle') { togglePlugin('flow', t); }
         else if (id === 'btn-thermal-toggle') { togglePlugin('thermal', t); }
         else if (id === 'btn-save-settings') { saveSettings(); }
-        else if (id === 'btn-connect') { sendAction('connect_printer'); }
-        else if (id === 'btn-disconnect') { sendAction('disconnect_printer'); }
+        else if (id === 'btn-connection-toggle') { toggleConnection(t); }
     });
     </script>
 </body>

@@ -34,6 +34,19 @@ function formatDuration(seconds) {
 }
 
 function updatePrinter(printer) {
+    // Sync connection toggle button
+    var connBtn = document.getElementById('btn-connection-toggle');
+    if (connBtn) {
+        if (printer.connected) {
+            connBtn.classList.remove('action-off');
+            connBtn.classList.add('action-on');
+            connBtn.textContent = 'Connected';
+        } else {
+            connBtn.classList.remove('action-on');
+            connBtn.classList.add('action-off');
+            connBtn.textContent = 'Disconnected';
+        }
+    }
     var s = printer.status || {};
     var lines = [];
     lines.push(printer.host || '--');
@@ -505,6 +518,21 @@ function drawToolpath(segments, bedX, bedY, nozzlePos) {
     ctx.strokeStyle = '#444';
     ctx.lineWidth = 1;
     ctx.strokeRect(legendX, legendTop, legendW, legendH);
+}
+
+function toggleConnection(btn) {
+    var isConnected = btn.classList.contains('action-on');
+    if (isConnected) {
+        sendAction('disconnect_printer');
+        btn.classList.remove('action-on');
+        btn.classList.add('action-off');
+        btn.textContent = 'Disconnected';
+    } else {
+        sendAction('connect_printer');
+        btn.classList.remove('action-off');
+        btn.classList.add('action-on');
+        btn.textContent = 'Connecting...';
+    }
 }
 
 function killAll() {
