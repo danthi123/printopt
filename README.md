@@ -45,6 +45,39 @@ cd printopt
 pip install -e ".[dev]"
 ```
 
+### SSH Setup (required for vibration analysis)
+
+The vibration analysis plugin fetches raw accelerometer data from the printer via SSH. You need passwordless SSH key access before using it.
+
+**Linux / macOS:**
+
+```bash
+# Generate a key if you don't have one
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+
+# Copy it to the printer (default password is usually 'makerbase' for Qidi printers)
+ssh-copy-id root@192.168.0.248
+
+# Verify it works without a password
+ssh root@192.168.0.248 "echo OK"
+```
+
+**Windows:**
+
+```powershell
+# Generate a key if you don't have one
+ssh-keygen -t ed25519 -f %USERPROFILE%\.ssh\id_ed25519 -N ""
+
+# Copy the public key to the printer
+# (Windows doesn't have ssh-copy-id, so do it manually)
+type %USERPROFILE%\.ssh\id_ed25519.pub | ssh root@192.168.0.248 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+
+# Verify it works without a password
+ssh root@192.168.0.248 "echo OK"
+```
+
+If your printer uses a different username or port, adjust accordingly. The SSH connection is only used for vibration analysis — flow compensation and thermal simulation work entirely over Moonraker's HTTP API.
+
 ## Quick Start
 
 ```bash
