@@ -108,9 +108,12 @@ class ThermalPlugin(Plugin):
         if self._nozzle_temp > 0:
             self.grid.nozzle_temp = self._nozzle_temp
 
-        # Detect layer change
-        if new_z > self._last_z + 0.05:
-            self.current_layer += 1
+        # Calculate layer from Z position (robust across restarts)
+        # Assumes 0.2mm layer height — first layer at ~0.2mm
+        layer_height = 0.2
+        estimated_layer = max(0, int(new_z / layer_height))
+        if estimated_layer > self.current_layer:
+            self.current_layer = estimated_layer
             await self.on_layer(self.current_layer, new_z)
 
         # Calculate time delta
@@ -298,7 +301,7 @@ class ThermalPlugin(Plugin):
         now = time.monotonic()
         last_rebuild = getattr(self, '_last_rebuild_time', 0)
         last_layer = getattr(self, '_last_rendered_layer', -1)
-        if now - last_rebuild < 5.0 and last_layer == self.current_layer:
+        if now - last_rebuild < 3.0 and last_layer == self.current_layer:
             return
         self._last_rebuild_time = now
         self._last_rendered_layer = self.current_layer
