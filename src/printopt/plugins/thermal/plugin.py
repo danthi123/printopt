@@ -66,6 +66,17 @@ class ThermalPlugin(Plugin):
         self.warnings = []
         self._toolpath_segments = []
         self._last_update = time.monotonic()
+
+        # Pre-build layer-to-move-index map for fast toolpath rendering
+        from printopt.core.gcode import FeatureType
+        self._layer_move_ranges: dict[int, tuple[int, int]] = {}
+        layer_changes = [f for f in self.parse_result.features if f.type == FeatureType.LAYER_CHANGE]
+        for i, lc in enumerate(layer_changes):
+            layer_num = lc.metadata.get("layer", i + 1)
+            start_line = lc.line_number
+            end_line = layer_changes[i + 1].line_number if i + 1 < len(layer_changes) else self.parse_result.moves[-1].line_number + 1
+            self._layer_move_ranges[layer_num] = (start_line, end_line)
+        logger.info("Built layer index: %d layers", len(self._layer_move_ranges))
         self._print_active = True
         logger.info("Thermal simulation initialized for %s", self.material_name)
 
@@ -292,38 +303,44 @@ class ThermalPlugin(Plugin):
         self._last_rebuild_time = now
         self._last_rendered_layer = self.current_layer
 
-        # Find moves for the last 3 layers
-        from printopt.core.gcode import FeatureType
-        layer_changes = [f for f in self.parse_result.features if f.type == FeatureType.LAYER_CHANGE]
-
-        # Find line range for recent layers
+        # Use pre-built layer index for fast lookup
         target_start_layer = max(1, self.current_layer - 2)
         start_line = 0
-        end_line = self.parse_result.moves[-1].line_number if self.parse_result.moves else 0
+        end_line = 999999999
+        layer_ranges = getattr(self, '_layer_move_ranges', {})
+        for layer_num in range(target_start_layer, self.current_layer + 1):
+            r = layer_ranges.get(layer_num)
+            if r:
+                if start_line == 0:
+                    start_line = r[0]
+                end_line = r[1]
 
-        for lc in layer_changes:
-            layer_num = lc.metadata.get("layer", 0)
-            if layer_num == target_start_layer:
-                start_line = lc.line_number
-            if layer_num == self.current_layer + 1:
-                end_line = lc.line_number
-                break
+        if start_line == 0:
+            return
 
-        # Build segments from moves in this range
-        now = time.monotonic()
+        # Build segments using binary search to find start position
         segments = []
         prev_move = None
         resolution = self.grid.config.resolution
 
-        # Get numpy grid for temperature lookups
+        # Get numpy grid for temperature lookups (single transfer for GPU)
         if self.grid.xp is not np:
             grid_np = self.grid.xp.asnumpy(self.grid.grid)
         else:
             grid_np = self.grid.grid
 
-        for move in self.parse_result.moves:
-            if move.line_number < start_line:
-                continue
+        # Binary search for the first move at or after start_line
+        moves = self.parse_result.moves
+        lo, hi = 0, len(moves) - 1
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if moves[mid].line_number < start_line:
+                lo = mid + 1
+            else:
+                hi = mid
+
+        for i in range(lo, len(moves)):
+            move = moves[i]
             if move.line_number > end_line:
                 break
             if move.is_extrusion and prev_move and move.distance > 0.5:
