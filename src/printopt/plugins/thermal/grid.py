@@ -5,6 +5,20 @@ from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass
 
+try:
+    import cupy as cp
+    GPU_AVAILABLE = True
+except ImportError:
+    cp = None
+    GPU_AVAILABLE = False
+
+
+def get_array_module(use_gpu: bool = False):
+    """Return cupy if GPU requested and available, else numpy."""
+    if use_gpu and GPU_AVAILABLE:
+        return cp
+    return np
+
 
 @dataclass
 class ThermalConfig:
@@ -23,6 +37,7 @@ class ThermalConfig:
     # Cooling coefficients
     convection_base: float = 10.0  # W/(m2*K) base convection
     fan_convection_factor: float = 30.0  # additional W/(m2*K) at 100% fan
+    use_gpu: bool = False  # Use cupy for GPU acceleration if available
 
 
 class ThermalGrid:
@@ -36,10 +51,11 @@ class ThermalGrid:
     def __init__(self, config: ThermalConfig | None = None) -> None:
         self.config = config or ThermalConfig()
         c = self.config
+        self.xp = get_array_module(c.use_gpu)
         self.nx = int(c.bed_x / c.resolution)
         self.ny = int(c.bed_y / c.resolution)
         # Temperature grid initialized to ambient
-        self.grid = np.full((self.ny, self.nx), c.ambient_temp, dtype=np.float64)
+        self.grid = self.xp.full((self.ny, self.nx), c.ambient_temp, dtype=self.xp.float64)
         self.fan_speed = 0.0  # 0-1 fraction
         self.nozzle_temp = 248.0  # C
 
@@ -79,6 +95,7 @@ class ThermalGrid:
         - Convection to air (fan-dependent)
         - Bed conduction (cells cool toward bed temp)
         """
+        xp = self.xp
         c = self.config
         old = self.grid.copy()
 
@@ -90,7 +107,7 @@ class ThermalGrid:
 
         # Conduction: discrete Laplacian
         dx2 = c.resolution * c.resolution
-        laplacian = np.zeros_like(old)
+        laplacian = xp.zeros_like(old)
         laplacian[1:-1, :] += old[:-2, :] + old[2:, :] - 2 * old[1:-1, :]
         laplacian[:, 1:-1] += old[:, :-2] + old[:, 2:] - 2 * old[:, 1:-1]
         laplacian /= dx2
@@ -112,7 +129,7 @@ class ThermalGrid:
         self.grid += bed_rate * (c.bed_temp - self.grid) * dt
 
         # Clamp to physical range
-        np.clip(self.grid, c.ambient_temp - 5, self.nozzle_temp, out=self.grid)
+        xp.clip(self.grid, c.ambient_temp - 5, self.nozzle_temp, out=self.grid)
 
     def get_hotspots(self, threshold: float | None = None) -> list[tuple[int, int, float]]:
         """Find cells above the glass transition temperature.
@@ -121,10 +138,12 @@ class ThermalGrid:
         """
         if threshold is None:
             threshold = self.config.glass_transition
-        ys, xs = np.where(self.grid > threshold)
+        # Work in numpy for the list comprehension
+        grid_np = self.xp.asnumpy(self.grid) if self.xp is not np else self.grid
+        ys, xs = np.where(grid_np > threshold)
         res = self.config.resolution
         return [
-            (int(x * res), int(y * res), float(self.grid[y, x]))
+            (int(x * res), int(y * res), float(grid_np[y, x]))
             for x, y in zip(xs, ys)
         ]
 
@@ -133,14 +152,17 @@ class ThermalGrid:
 
         High gradients indicate warping risk.
         """
-        gy, gx = np.gradient(self.grid, self.config.resolution)
-        return np.sqrt(gx**2 + gy**2)
+        xp = self.xp
+        gy, gx = xp.gradient(self.grid, self.config.resolution)
+        return xp.sqrt(gx**2 + gy**2)
 
     def get_max_gradient(self) -> float:
         """Return the maximum thermal gradient magnitude."""
         grad = self.get_thermal_gradient()
-        return float(np.max(grad))
+        return float(self.xp.max(grad))
 
     def get_heatmap(self) -> np.ndarray:
-        """Return the current temperature grid for visualization."""
+        """Return the current temperature grid as numpy array."""
+        if self.xp is not np:
+            return self.xp.asnumpy(self.grid.copy())
         return self.grid.copy()

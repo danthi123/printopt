@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from printopt.plugins.thermal.grid import ThermalGrid, ThermalConfig
+from printopt.plugins.thermal.grid import ThermalGrid, ThermalConfig, GPU_AVAILABLE
 from printopt.plugins.thermal.plugin import ThermalPlugin
 
 
@@ -94,6 +94,55 @@ class TestThermalGrid:
         heatmap = grid.get_heatmap()
         heatmap[0, 0] = 999
         assert grid.grid[0, 0] != 999
+
+
+class TestGPUAcceleration:
+    def test_gpu_detection(self):
+        """GPU_AVAILABLE should be a boolean."""
+        assert isinstance(GPU_AVAILABLE, bool)
+
+    def test_grid_works_without_gpu(self):
+        """Grid should work with use_gpu=False even if GPU is available."""
+        config = ThermalConfig(bed_x=50, bed_y=50, use_gpu=False)
+        grid = ThermalGrid(config)
+        grid.deposit_heat(25, 25, 5.0, 1.0)
+        grid.step(1.0)
+        assert grid.grid[25, 25] > 35.0
+
+    @pytest.mark.skipif(not GPU_AVAILABLE, reason="No GPU available")
+    def test_grid_works_with_gpu(self):
+        """Grid should produce same results on GPU."""
+        config = ThermalConfig(bed_x=50, bed_y=50, use_gpu=True)
+        grid = ThermalGrid(config)
+        grid.deposit_heat(25, 25, 5.0, 1.0)
+        grid.step(1.0)
+        heatmap = grid.get_heatmap()
+        assert heatmap[25, 25] > 35.0
+        assert isinstance(heatmap, np.ndarray)  # Should be numpy even with GPU
+
+    @pytest.mark.skipif(not GPU_AVAILABLE, reason="No GPU available")
+    def test_gpu_hotspots_returns_python_types(self):
+        """Hotspots should return plain Python types even with GPU."""
+        config = ThermalConfig(bed_x=50, bed_y=50, use_gpu=True)
+        grid = ThermalGrid(config)
+        grid.grid[25, 25] = 100.0
+        hotspots = grid.get_hotspots()
+        assert len(hotspots) >= 1
+        for x, y, t in hotspots:
+            assert isinstance(x, int)
+            assert isinstance(y, int)
+            assert isinstance(t, float)
+
+    def test_cpu_fallback_when_gpu_requested_but_unavailable(self):
+        """If GPU not available, use_gpu=True should silently fall back to numpy."""
+        if GPU_AVAILABLE:
+            pytest.skip("GPU is available, cannot test fallback")
+        config = ThermalConfig(bed_x=50, bed_y=50, use_gpu=True)
+        grid = ThermalGrid(config)
+        assert grid.xp is np
+        grid.deposit_heat(25, 25, 5.0, 1.0)
+        grid.step(1.0)
+        assert grid.grid[25, 25] > 35.0
 
 
 class TestThermalPlugin:
