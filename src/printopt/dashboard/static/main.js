@@ -254,6 +254,19 @@ function drawFFTPlots(results) {
 }
 
 function updateFlowPanel(data) {
+    // Sync toggle button state
+    var flowBtn = document.getElementById('btn-flow-toggle');
+    if (flowBtn) {
+        if (data.enabled) {
+            flowBtn.classList.remove('action-off');
+            flowBtn.classList.add('action-on');
+            flowBtn.textContent = 'Enabled';
+        } else {
+            flowBtn.classList.remove('action-on');
+            flowBtn.classList.add('action-off');
+            flowBtn.textContent = 'Disabled';
+        }
+    }
     var statsEl = document.getElementById('flow-stats');
     var lines = [];
     lines.push('Enabled: ' + (data.enabled ? 'YES' : 'NO'));
@@ -290,6 +303,19 @@ function updateFlowPanel(data) {
 }
 
 function updateThermalPanel(data) {
+    // Sync toggle button state
+    var thermalBtn = document.getElementById('btn-thermal-toggle');
+    if (thermalBtn) {
+        if (data.enabled !== false) {
+            thermalBtn.classList.remove('action-off');
+            thermalBtn.classList.add('action-on');
+            thermalBtn.textContent = 'Enabled';
+        } else {
+            thermalBtn.classList.remove('action-on');
+            thermalBtn.classList.add('action-off');
+            thermalBtn.textContent = 'Disabled';
+        }
+    }
     var statsEl = document.getElementById('thermal-stats');
     var lines = [];
     lines.push('Material: ' + (data.material || '--'));
@@ -499,6 +525,21 @@ function sendAction(action) {
     }
 }
 
+function togglePlugin(name, btn) {
+    var isEnabled = btn.classList.contains('action-on');
+    if (isEnabled) {
+        sendAction('disable_' + name);
+        btn.classList.remove('action-on');
+        btn.classList.add('action-off');
+        btn.textContent = 'Disabled';
+    } else {
+        sendAction('enable_' + name);
+        btn.classList.remove('action-off');
+        btn.classList.add('action-on');
+        btn.textContent = 'Enabled';
+    }
+}
+
 function doVibAnalyze(btn) {
     btn.disabled = true;
     btn.textContent = 'Running...';
@@ -578,7 +619,7 @@ function loadPrinterInfo() {
             lines.push('Bed: ' + info.bed_x + ' x ' + info.bed_y + ' x ' + info.bed_z + ' mm');
             lines.push('Max velocity: ' + info.max_velocity + ' mm/s');
             lines.push('Nozzle: ' + info.nozzle_diameter + ' mm');
-            lines.push('ADXL345: ' + (info.has_accelerometer ? 'Yes' : 'No'));
+            lines.push('Accelerometer: ' + (info.has_accelerometer ? (info.accelerometer_type || 'Yes') : 'No'));
             if (info.shaper_x) {
                 lines.push('Shaper X: ' + info.shaper_x[0] + ' @ ' + info.shaper_x[1] + ' Hz');
             }

@@ -109,8 +109,7 @@
             <div id="panel-flow" class="plugin-panel">
                 <h2>Flow Compensation</h2>
                 <div class="panel-actions">
-                    <button class="action-btn action-on" id="btn-flow-enable">Enable</button>
-                    <button class="action-btn action-off" id="btn-flow-disable">Disable</button>
+                    <button class="action-btn action-on" id="btn-flow-toggle">Enabled</button>
                 </div>
                 <div id="flow-stats"></div>
                 <div id="flow-timeline"></div>
@@ -120,8 +119,7 @@
             <div id="panel-thermal" class="plugin-panel">
                 <h2>Thermal Simulation</h2>
                 <div class="panel-actions">
-                    <button class="action-btn action-on" id="btn-thermal-enable">Enable</button>
-                    <button class="action-btn action-off" id="btn-thermal-disable">Disable</button>
+                    <button class="action-btn action-on" id="btn-thermal-toggle">Enabled</button>
                 </div>
                 <div id="thermal-stats"></div>
                 <canvas id="thermal-canvas" width="800" height="800"></canvas>
@@ -140,10 +138,8 @@
         if (!t.matches || !t.matches('button')) return;
         var id = t.id;
         if (id === 'btn-vib-analyze') { doVibAnalyze(t); }
-        else if (id === 'btn-flow-enable') { sendAction('enable_flow'); }
-        else if (id === 'btn-flow-disable') { sendAction('disable_flow'); }
-        else if (id === 'btn-thermal-enable') { sendAction('enable_thermal'); }
-        else if (id === 'btn-thermal-disable') { sendAction('disable_thermal'); }
+        else if (id === 'btn-flow-toggle') { togglePlugin('flow', t); }
+        else if (id === 'btn-thermal-toggle') { togglePlugin('thermal', t); }
         else if (id === 'btn-save-settings') { saveSettings(); }
         else if (id === 'btn-connect') { sendAction('connect_printer'); }
         else if (id === 'btn-disconnect') { sendAction('disconnect_printer'); }

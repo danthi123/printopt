@@ -491,6 +491,7 @@ async def do_run(
                 "max_velocity": config.max_velocity,
                 "nozzle_diameter": config.nozzle_diameter,
                 "has_accelerometer": config.has_accelerometer,
+                "accelerometer_type": config.accelerometer_type,
                 "shaper_x": list(config.shaper_x),
                 "shaper_y": list(config.shaper_y),
                 "moonraker_version": server_info.get("moonraker_version", "unknown"),

@@ -21,6 +21,7 @@ class PrinterConfig:
     filament_diameter: float = 1.75
     max_velocity: float = 300
     has_accelerometer: bool = False
+    accelerometer_type: str = ""
     shaper_x: tuple[str, float] = ("", 0.0)
     shaper_y: tuple[str, float] = ("", 0.0)
 
@@ -38,7 +39,8 @@ class PrinterConfig:
         max_vel = float(printer.get("max_velocity", 300))
         # Detect any supported Klipper accelerometer type
         accel_chips = ("adxl345", "lis2dw", "mpu9250", "mpu6050", "mpu6500")
-        has_accel = any(chip in cfg for chip in accel_chips)
+        detected_accel = next((chip for chip in accel_chips if chip in cfg), "")
+        has_accel = bool(detected_accel)
         shaper = cfg.get("input_shaper", {})
         shaper_x = (shaper.get("shaper_type_x", ""), float(shaper.get("shaper_freq_x", 0)))
         shaper_y = (shaper.get("shaper_type_y", ""), float(shaper.get("shaper_freq_y", 0)))
@@ -46,6 +48,7 @@ class PrinterConfig:
             kinematics=kinematics, bed_x=bed_x, bed_y=bed_y, bed_z=bed_z,
             nozzle_diameter=nozzle, filament_diameter=filament,
             max_velocity=max_vel, has_accelerometer=has_accel,
+            accelerometer_type=detected_accel.upper() if detected_accel else "",
             shaper_x=shaper_x, shaper_y=shaper_y,
         )
 
