@@ -272,6 +272,11 @@ async def _dashboard_vibration_analyze(client: MoonrakerClient, mgr: PluginManag
                     custom_A, custom_T, custom_remaining = design_custom_shaper(
                         freqs, psd, peaks
                     )
+                    logger.info(
+                        "%s axis: custom shaper %d pulses, remaining=%.4f vs preset=%.4f",
+                        axis.upper(), len(custom_A), custom_remaining,
+                        shapers[0].remaining_vibration if shapers else 999,
+                    )
                     if custom_A and shapers and custom_remaining < shapers[0].remaining_vibration:
                         logger.info(
                             "%s axis: custom shaper (%d pulses) beats best preset: "

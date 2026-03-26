@@ -283,6 +283,9 @@ function updateFlowPanel(data) {
     lines.push('Enabled: ' + (data.enabled ? 'YES' : 'NO'));
     lines.push('Total adjustments: ' + (data.total_adjustments || 0));
     lines.push('Features ahead: ' + (data.features_ahead || 0));
+    lines.push('State: ' + (data.state || '--'));
+    if (data.filename) lines.push('File: ' + data.filename);
+    if (data.progress > 0) lines.push('Progress: ' + data.progress.toFixed(1) + '%');
     statsEl.textContent = lines.join('\n');
 
     var timelineEl = document.getElementById('flow-timeline');
@@ -295,6 +298,19 @@ function updateFlowPanel(data) {
         });
         timelineEl.textContent = compLines.join('\n');
     }
+
+    var logEl = document.getElementById('flow-log');
+    var log = data.log || [];
+    if (log.length === 0) {
+        logEl.textContent = 'No adjustments yet';
+    } else {
+        var logLines = log.map(function(entry) {
+            var time = new Date(entry.time * 1000);
+            var ts = time.toLocaleTimeString();
+            return ts + ' ' + entry.feature + ' L' + entry.line + ': ' + entry.value;
+        });
+        logEl.textContent = logLines.join('\n');
+    }
 }
 
 function updateThermalPanel(data) {
@@ -305,9 +321,11 @@ function updateThermalPanel(data) {
     if (data.max_temp !== undefined) lines.push('Max temp: ' + data.max_temp.toFixed(1) + ' C');
     if (data.max_gradient !== undefined) lines.push('Max gradient: ' + data.max_gradient.toFixed(2) + ' C/mm');
     if (data.hotspot_count !== undefined) lines.push('Hotspots: ' + data.hotspot_count);
+    if (data.speed_adjusted) lines.push('Speed: REDUCED (85%)');
+    if (data.fan_adjusted) lines.push('Fan: BOOSTED (+20%)');
+    if (data.print_active) lines.push('Status: ACTIVE');
     statsEl.textContent = lines.join('\n');
 
-    // Draw thermal heatmap if we have grid data
     if (data.heatmap) {
         drawHeatmap(data.heatmap);
     }

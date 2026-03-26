@@ -34,6 +34,10 @@ class ThermalPlugin(Plugin):
         self._print_active: bool = False
         self._nozzle_temp: float = 0
         self._fan_speed: float = 0
+        self._moonraker = None  # Set externally for gcode injection
+        self._speed_adjusted: bool = False
+        self._fan_adjusted: bool = False
+        self._baseline_fan: float = 35.0  # % from printer status
 
     async def on_start(self) -> None:
         logger.info("Thermal simulation plugin started")
@@ -115,6 +119,52 @@ class ThermalPlugin(Plugin):
             self.grid.step(dt)
 
         self._last_x, self._last_y, self._last_z = new_x, new_y, new_z
+
+        # Apply thermal adjustments when actively printing
+        if self._print_active:
+            await self._apply_thermal_adjustments()
+
+    async def _apply_thermal_adjustments(self) -> None:
+        """Adjust fan speed and print speed based on thermal conditions."""
+        if not self.grid or not self._moonraker or not self._print_active:
+            return
+
+        max_grad = self.grid.get_max_gradient()
+        hotspots = self.grid.get_hotspots()
+
+        # High gradient — boost fan
+        if max_grad > 15.0 and not self._fan_adjusted:
+            fan_pct = min(100, self._baseline_fan + 20)
+            try:
+                await self._moonraker.inject(f"M106 S{int(fan_pct * 255 / 100)}")
+                self._fan_adjusted = True
+                logger.info("Thermal: boosting fan to %d%% (gradient %.1f C/mm)", fan_pct, max_grad)
+            except Exception as e:
+                logger.warning("Thermal fan adjust failed: %s", e)
+        elif max_grad <= 12.0 and self._fan_adjusted:
+            # Restore fan
+            try:
+                await self._moonraker.inject(f"M106 S{int(self._baseline_fan * 255 / 100)}")
+                self._fan_adjusted = False
+                logger.info("Thermal: restoring fan to %d%%", self._baseline_fan)
+            except Exception:
+                pass
+
+        # Many hotspots — slow down
+        if len(hotspots) > 5 and not self._speed_adjusted:
+            try:
+                await self._moonraker.inject("M220 S85")
+                self._speed_adjusted = True
+                logger.info("Thermal: slowing to 85%% speed (%d hotspots)", len(hotspots))
+            except Exception as e:
+                logger.warning("Thermal speed adjust failed: %s", e)
+        elif len(hotspots) <= 2 and self._speed_adjusted:
+            try:
+                await self._moonraker.inject("M220 S100")
+                self._speed_adjusted = False
+                logger.info("Thermal: restoring 100%% speed")
+            except Exception:
+                pass
 
     async def on_layer(self, layer: int, z: float) -> None:
         self.current_layer = layer
