@@ -124,7 +124,12 @@ class FlowPlugin(Plugin):
         lookahead_lines = max(1000, total_moves // 50)
 
         skipped = 0
+        injected_this_cycle = 0
+        MAX_INJECTIONS_PER_CYCLE = 10  # Don't flood the printer
+
         while self._schedule_idx < len(self._scheduled_lines):
+            if injected_this_cycle >= MAX_INJECTIONS_PER_CYCLE:
+                break
             sched_line = self._scheduled_lines[self._schedule_idx]
             if sched_line > current_line + lookahead_lines:
                 break
@@ -154,6 +159,7 @@ class FlowPlugin(Plugin):
                     try:
                         await self._inject_with_retry(comp.value)
                         self.total_adjustments += 1
+                        injected_this_cycle += 1
                         self._log_entry(comp)
                     except Exception as e:
                         logger.warning("Failed to inject: %s", e)
