@@ -38,6 +38,9 @@ class ThermalConfig:
     convection_base: float = 10.0  # W/(m2*K) base convection
     fan_convection_factor: float = 30.0  # additional W/(m2*K) at 100% fan
     use_gpu: bool = True  # Auto-detect: uses GPU if cupy installed, falls back to CPU
+    # Thresholds (auto-calculated from material properties if not set)
+    gradient_warning_threshold: float = 0.0  # C/mm, 0 = auto-calculate
+    hotspot_warning_count: int = 0  # 0 = auto-calculate
 
 
 class ThermalGrid:
@@ -59,9 +62,50 @@ class ThermalGrid:
         self.fan_speed = 0.0  # 0-1 fraction
         self.nozzle_temp = 248.0  # C
 
+        # Layer history for Z-accumulated heat tracking
+        self._layer_history: list[np.ndarray] = []  # last N layers' heat contribution
+        self._max_history = 5  # track last 5 layers
+
+        # Auto-calculate thresholds based on material
+        if c.gradient_warning_threshold <= 0:
+            # Higher Tg materials can tolerate more gradient
+            # PETG (Tg=78): ~20 C/mm, ABS (Tg=105): ~30 C/mm, PLA (Tg=60): ~15 C/mm
+            self.gradient_threshold = max(10.0, c.glass_transition * 0.25)
+        else:
+            self.gradient_threshold = c.gradient_warning_threshold
+
+        if c.hotspot_warning_count <= 0:
+            # Scale with bed area
+            bed_cells = self.nx * self.ny
+            self.hotspot_threshold = max(3, int(bed_cells * 0.0002))  # 0.02% of cells
+        else:
+            self.hotspot_threshold = c.hotspot_warning_count
+
+    def advance_layer(self) -> None:
+        """Record current heat state and apply accumulated layer history."""
+        # Save current grid as a layer snapshot (just the delta above ambient)
+        delta = self.grid - self.config.ambient_temp
+        if self.xp is not np:
+            delta = self.xp.asnumpy(delta)
+        else:
+            delta = delta.copy()
+        self._layer_history.append(delta)
+        if len(self._layer_history) > self._max_history:
+            self._layer_history.pop(0)
+
+        # Apply accumulated heat from previous layers
+        # Each previous layer contributes diminishing heat (conduction upward)
+        for i, hist in enumerate(reversed(self._layer_history[:-1])):
+            decay = 0.3 ** (i + 1)  # 30% per layer distance
+            if self.xp is not np:
+                self.grid += self.xp.asarray(hist * decay)
+            else:
+                self.grid += hist * decay
+
     def reset(self) -> None:
         """Reset grid to ambient temperature."""
         self.grid[:] = self.config.ambient_temp
+        self._layer_history.clear()
 
     def deposit_heat(self, x: float, y: float, flow_rate: float, dt: float) -> None:
         """Deposit heat at a position from nozzle extrusion.

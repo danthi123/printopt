@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 
 import numpy as np
@@ -30,6 +31,7 @@ class ThermalPlugin(Plugin):
         self._last_x: float = 0
         self._last_y: float = 0
         self._last_z: float = 0
+        self._last_e: float = 0.0
         self._last_update: float = 0
         self._print_active: bool = False
         self._nozzle_temp: float = 0
@@ -38,6 +40,8 @@ class ThermalPlugin(Plugin):
         self._speed_adjusted: bool = False
         self._fan_adjusted: bool = False
         self._baseline_fan: float = 35.0  # % from printer status
+        self._current_fan_boost: float = 0
+        self._current_speed_pct: int = 100
 
     async def on_start(self) -> None:
         logger.info("Thermal simulation plugin started")
@@ -95,24 +99,45 @@ class ThermalPlugin(Plugin):
         dt = now - self._last_update
         self._last_update = now
 
-        # If position changed and we're extruding, deposit heat
+        # If position changed, deposit heat based on extrusion
         dx = new_x - self._last_x
         dy = new_y - self._last_y
         dist = (dx**2 + dy**2) ** 0.5
 
-        if dist > 0.1 and self._nozzle_temp > 100:
-            # Estimate flow rate from distance and time
-            # Approximate: 0.4mm nozzle * 0.2mm layer * speed
+        # Query extruder position if available
+        new_e = status.get("e_position", self._last_e)
+
+        # Use E-value based heat deposition when available
+        delta_e = new_e - self._last_e
+        if delta_e > 0 and dt > 0:
+            # E is in mm of filament. Convert to volumetric flow:
+            # Volume = pi * (filament_diameter/2)^2 * delta_e
+            filament_area = math.pi * (1.75 / 2) ** 2  # mm^2 for 1.75mm filament
+            volume = filament_area * delta_e  # mm^3
+            flow_rate = volume / dt  # mm^3/s
+
+            # Deposit heat along the move path
+            if dist > 0.1:
+                steps = max(1, int(dist))
+                for s in range(steps):
+                    frac = (s + 0.5) / steps
+                    px = self._last_x + dx * frac
+                    py = self._last_y + dy * frac
+                    self.grid.deposit_heat(px, py, flow_rate, dt / steps)
+        elif dist > 0.1 and self._nozzle_temp > 100:
+            # Fallback: estimate from distance (original method)
             speed = dist / dt if dt > 0 else 0
             flow_rate = 0.4 * 0.2 * speed  # mm3/s approximation
 
             # Deposit heat along the move path
             steps = max(1, int(dist))
-            for i in range(steps):
-                frac = (i + 0.5) / steps
+            for s in range(steps):
+                frac = (s + 0.5) / steps
                 px = self._last_x + dx * frac
                 py = self._last_y + dy * frac
                 self.grid.deposit_heat(px, py, flow_rate, dt / steps)
+
+        self._last_e = new_e
 
         # Run simulation step
         if dt > 0:
@@ -125,58 +150,78 @@ class ThermalPlugin(Plugin):
             await self._apply_thermal_adjustments()
 
     async def _apply_thermal_adjustments(self) -> None:
-        """Adjust fan speed and print speed based on thermal conditions."""
+        """Adjust fan speed and print speed based on thermal conditions.
+
+        Uses proportional scaling based on gradient severity and hotspot count,
+        with hysteresis to avoid oscillation.
+        """
         if not self.grid or not self._moonraker or not self._print_active:
             return
 
         max_grad = self.grid.get_max_gradient()
-        hotspots = self.grid.get_hotspots()
+        hotspot_count = len(self.grid.get_hotspots())
+        grad_threshold = self.grid.gradient_threshold
+        hotspot_threshold = self.grid.hotspot_threshold
 
-        # High gradient — boost fan
-        if max_grad > 15.0 and not self._fan_adjusted:
-            fan_pct = min(100, self._baseline_fan + 20)
+        # Proportional fan adjustment based on gradient severity
+        if max_grad > grad_threshold:
+            # Scale: at threshold = +10% fan, at 3x threshold = +30% fan
+            severity = min((max_grad / grad_threshold - 1.0) / 2.0, 1.0)
+            fan_boost = 10 + severity * 20  # 10-30% boost
+            fan_pct = min(100, self._baseline_fan + fan_boost)
             try:
                 await self._moonraker.inject(f"M106 S{int(fan_pct * 255 / 100)}")
+                if not self._fan_adjusted:
+                    logger.info("Thermal: fan +%.0f%% (gradient %.1f C/mm)", fan_boost, max_grad)
                 self._fan_adjusted = True
-                logger.info("Thermal: boosting fan to %d%% (gradient %.1f C/mm)", fan_pct, max_grad)
+                self._current_fan_boost = fan_boost
             except Exception as e:
                 logger.warning("Thermal fan adjust failed: %s", e)
-        elif max_grad <= 12.0 and self._fan_adjusted:
-            # Restore fan
+        elif max_grad < grad_threshold * 0.7 and self._fan_adjusted:
+            # Restore when well below threshold (hysteresis)
             try:
                 await self._moonraker.inject(f"M106 S{int(self._baseline_fan * 255 / 100)}")
                 self._fan_adjusted = False
-                logger.info("Thermal: restoring fan to %d%%", self._baseline_fan)
+                self._current_fan_boost = 0
+                logger.info("Thermal: fan restored to %.0f%%", self._baseline_fan)
             except Exception:
                 pass
 
-        # Many hotspots — slow down
-        if len(hotspots) > 5 and not self._speed_adjusted:
+        # Proportional speed adjustment based on hotspot count
+        if hotspot_count > hotspot_threshold:
+            # Scale: at threshold = 95% speed, at 5x threshold = 75% speed
+            severity = min((hotspot_count / hotspot_threshold - 1.0) / 4.0, 1.0)
+            speed_pct = max(75, int(100 - severity * 25))  # 75-95%
             try:
-                await self._moonraker.inject("M220 S85")
+                await self._moonraker.inject(f"M220 S{speed_pct}")
+                if not self._speed_adjusted:
+                    logger.info("Thermal: speed %d%% (%d hotspots)", speed_pct, hotspot_count)
                 self._speed_adjusted = True
-                logger.info("Thermal: slowing to 85%% speed (%d hotspots)", len(hotspots))
+                self._current_speed_pct = speed_pct
             except Exception as e:
                 logger.warning("Thermal speed adjust failed: %s", e)
-        elif len(hotspots) <= 2 and self._speed_adjusted:
+        elif hotspot_count <= max(1, hotspot_threshold // 3) and self._speed_adjusted:
+            # Restore when well below threshold
             try:
                 await self._moonraker.inject("M220 S100")
                 self._speed_adjusted = False
-                logger.info("Thermal: restoring 100%% speed")
+                self._current_speed_pct = 100
+                logger.info("Thermal: speed restored to 100%%")
             except Exception:
                 pass
 
     async def on_layer(self, layer: int, z: float) -> None:
         self.current_layer = layer
         if self.grid:
+            self.grid.advance_layer()
             max_grad = self.grid.get_max_gradient()
             hotspots = self.grid.get_hotspots()
-            if max_grad > 15.0:
+            if max_grad > self.grid.gradient_threshold:
                 self.warnings.append({
                     "layer": layer, "type": "high_gradient", "value": max_grad,
                 })
                 logger.warning("Layer %d: high thermal gradient %.1f C/mm", layer, max_grad)
-            if len(hotspots) > 10:
+            if len(hotspots) > self.grid.hotspot_threshold:
                 self.warnings.append({
                     "layer": layer, "type": "hotspots", "count": len(hotspots),
                 })
@@ -236,6 +281,8 @@ class ThermalPlugin(Plugin):
         }
         data["speed_adjusted"] = self._speed_adjusted
         data["fan_adjusted"] = self._fan_adjusted
+        data["fan_boost"] = self._current_fan_boost
+        data["speed_pct"] = self._current_speed_pct
         if self.grid:
             data["max_temp"] = round(float(self.grid.grid.max()), 1)
             data["max_gradient"] = round(self.grid.get_max_gradient(), 2)
