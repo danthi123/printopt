@@ -126,6 +126,7 @@ class FlowPlugin(Plugin):
         # Inject all scheduled compensations up to current line + lookahead
         lookahead_lines = 200
 
+        skipped = 0
         while self._schedule_idx < len(self._scheduled_lines):
             sched_line = self._scheduled_lines[self._schedule_idx]
             if sched_line > current_line + lookahead_lines:
@@ -133,6 +134,7 @@ class FlowPlugin(Plugin):
             if sched_line < current_line - 50:
                 # Already passed this line, skip
                 self._schedule_idx += 1
+                skipped += 1
                 continue
 
             comps = self._schedule[sched_line]
@@ -160,6 +162,10 @@ class FlowPlugin(Plugin):
                         logger.warning("Failed to inject: %s", e)
 
             self._schedule_idx += 1
+
+        if skipped > 0:
+            logger.info("Skipped %d past schedule entries, idx now %d/%d, current_line=%d",
+                        skipped, self._schedule_idx, len(self._scheduled_lines), current_line)
 
         # Apply thermal adjustments if available
         if self._thermal_plugin:
