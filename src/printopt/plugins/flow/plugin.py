@@ -106,12 +106,19 @@ class FlowPlugin(Plugin):
 
         # Always apply thermal adjustments when thermal plugin is active
         if self._thermal_plugin and self.parse_result:
-            await self._apply_thermal_compensations()
+            try:
+                await self._apply_thermal_compensations()
+            except Exception as e:
+                logger.warning("Thermal comp error: %s", e)
 
         if self._schedule_idx >= len(self._scheduled_lines):
-            return  # All compensations applied or schedule empty
+            if self.total_adjustments == 0 and len(self._scheduled_lines) > 0:
+                logger.warning("Schedule exhausted with 0 adjustments! idx=%d, len=%d",
+                               self._schedule_idx, len(self._scheduled_lines))
+            return
 
         if not self.parse_result or not self._scheduled_lines:
+            logger.warning("No parse_result or empty schedule")
             return
 
         total_moves = len(self.parse_result.moves)
