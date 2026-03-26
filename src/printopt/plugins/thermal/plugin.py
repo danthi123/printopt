@@ -67,16 +67,11 @@ class ThermalPlugin(Plugin):
         self._toolpath_segments = []
         self._last_update = time.monotonic()
 
-        # Pre-build layer-to-move-index map for fast toolpath rendering
-        from printopt.core.gcode import FeatureType
-        self._layer_move_ranges: dict[int, tuple[int, int]] = {}
-        layer_changes = [f for f in self.parse_result.features if f.type == FeatureType.LAYER_CHANGE]
-        for i, lc in enumerate(layer_changes):
-            layer_num = lc.metadata.get("layer", i + 1)
-            start_line = lc.line_number
-            end_line = layer_changes[i + 1].line_number if i + 1 < len(layer_changes) else self.parse_result.moves[-1].line_number + 1
-            self._layer_move_ranges[layer_num] = (start_line, end_line)
-        logger.info("Built layer index: %d layers", len(self._layer_move_ranges))
+        # Pre-build per-layer extrusion segments for Fluidd-style toolpath rendering
+        self._layer_segments = self._build_layer_segments()
+        logger.info("Built layer index: %d layers, %d total segments",
+                     len(self._layer_segments),
+                     sum(len(v) for v in self._layer_segments.values()))
         self._print_active = True
         logger.info("Thermal simulation initialized for %s", self.material_name)
 
@@ -164,7 +159,7 @@ class ThermalPlugin(Plugin):
 
         # Build toolpath from parsed gcode (much more complete than polled positions)
         # Re-render on each layer change or periodically
-        if self._print_active and self.parse_result and self.current_layer > 0:
+        if self._print_active and self.parse_result:
             self._rebuild_toolpath_from_gcode()
 
         self._last_e = new_e
@@ -227,7 +222,7 @@ class ThermalPlugin(Plugin):
         if hotspot_count > hotspot_threshold:
             # Scale: at threshold = 95% speed, at 5x threshold = 75% speed
             severity = min((hotspot_count / hotspot_threshold - 1.0) / 4.0, 1.0)
-            speed_pct = max(75, int(100 - severity * 25))  # 75-95%
+            speed_pct = max(90, int(100 - severity * 25))  # 90-95%
             try:
                 if speed_pct != self._last_injected_speed:
                     await self._moonraker.inject(f"M220 S{speed_pct}")
@@ -291,42 +286,59 @@ class ThermalPlugin(Plugin):
         self.grid = None
         self.parse_result = None
 
-    def _rebuild_toolpath_from_gcode(self) -> None:
-        """Build toolpath from recently printed gcode moves.
+    def _build_layer_segments(self) -> dict[int, list[tuple[float, float, float, float]]]:
+        """Pre-build per-layer extrusion segments from parsed gcode.
 
-        Uses print progress to find current position, then renders
-        the last ~2000 extrusion moves colored by grid temperature.
+        Called once at print start. Returns a dict mapping layer number
+        to a list of (x1, y1, x2, y2) line segments for that layer.
         """
-        if not self.parse_result or not self.grid:
+        if not self.parse_result:
+            return {}
+
+        from printopt.core.gcode import FeatureType
+
+        layers: dict[int, list[tuple[float, float, float, float]]] = {}
+        current_layer = 0
+        prev_x, prev_y = 0.0, 0.0
+
+        # Find layer change line numbers
+        layer_lines: dict[int, int] = {}
+        for f in self.parse_result.features:
+            if f.type == FeatureType.LAYER_CHANGE:
+                layer_lines[f.line_number] = f.metadata.get("layer", 0)
+
+        for move in self.parse_result.moves:
+            # Check if this move crosses a layer change
+            if move.line_number in layer_lines:
+                current_layer = layer_lines[move.line_number]
+
+            if move.is_extrusion and move.distance > 0.3:
+                seg = (round(prev_x, 1), round(prev_y, 1),
+                       round(move.x, 1), round(move.y, 1))
+                layers.setdefault(current_layer, []).append(seg)
+
+            prev_x, prev_y = move.x, move.y
+
+        return layers
+
+    def _rebuild_toolpath_from_gcode(self) -> None:
+        """Look up pre-built layer segments and sample grid temperatures.
+
+        Uses the layer index built at print start — no gcode scanning needed.
+        Renders current layer plus 2 previous layers with age-based fading.
+        """
+        if not self.grid or not hasattr(self, '_layer_segments'):
             return
 
-        # Rebuild every 3 seconds
         now = time.monotonic()
         last_rebuild = getattr(self, '_last_rebuild_time', 0)
-        if now - last_rebuild < 3.0:
+        if now - last_rebuild < 2.0:
             return
         self._last_rebuild_time = now
 
-        # Use progress to find current move index
-        progress = getattr(self, '_current_progress', 0)
-        if not progress:
-            # Try to get from last status
-            progress = self._last_z / (self.grid.config.bed_z or 248) * 100 if self._last_z > 0 else 0
-
-        moves = self.parse_result.moves
-        total_moves = len(moves)
-        if total_moves == 0:
+        layer_segs = getattr(self, '_layer_segments', {})
+        if not layer_segs:
             return
-
-        current_idx = min(int(progress / 100.0 * total_moves), total_moves - 1)
-
-        # Render last 2000 extrusion moves up to current position
-        RENDER_COUNT = 2000
-        start_idx = max(0, current_idx - RENDER_COUNT * 3)  # overscan since not all moves are extrusions
-
-        segments = []
-        prev_move = None
-        resolution = self.grid.config.resolution
 
         # Single GPU→CPU transfer for temperature lookups
         if self.grid.xp is not np:
@@ -334,31 +346,37 @@ class ThermalPlugin(Plugin):
         else:
             grid_np = self.grid.grid
 
-        for i in range(start_idx, min(current_idx + 1, total_moves)):
-            move = moves[i]
-            if move.is_extrusion and prev_move and move.distance > 0.5:
-                # Get temperature at endpoint
-                ix = int(move.x / resolution)
-                iy = int(move.y / resolution)
+        resolution = self.grid.config.resolution
+        segments = []
+        now_mono = time.monotonic()
+
+        # Render current layer + 2 previous layers
+        for layer_num in range(max(0, self.current_layer - 2), self.current_layer + 1):
+            layer_moves = layer_segs.get(layer_num, [])
+            age_offset = (self.current_layer - layer_num) * 10.0  # older layers appear cooler
+
+            for (x1, y1, x2, y2) in layer_moves:
+                # Sample temperature at endpoint
+                ix = int(x2 / resolution)
+                iy = int(y2 / resolution)
                 temp = 35.0
                 if 0 <= ix < self.grid.nx and 0 <= iy < self.grid.ny:
                     temp = float(grid_np[iy, ix])
 
                 segments.append({
-                    "x1": round(prev_move.x, 1),
-                    "y1": round(prev_move.y, 1),
-                    "x2": round(move.x, 1),
-                    "y2": round(move.y, 1),
+                    "x1": x1, "y1": y1, "x2": x2, "y2": y2,
                     "temp": round(temp, 1),
-                    "layer": self.current_layer,
-                    "age": 0,
-                    "created": now,
+                    "layer": layer_num,
+                    "age": age_offset,
+                    "created": now_mono - age_offset,
                 })
-            prev_move = move
 
-        # Cap segments and update
-        if segments:
-            self._toolpath_segments = segments[-self._max_dashboard_segments:]
+        # Cap to dashboard limit
+        if len(segments) > self._max_dashboard_segments:
+            # Keep most recent segments (current layer prioritized)
+            segments = segments[-self._max_dashboard_segments:]
+
+        self._toolpath_segments = segments
 
     def _downsample_heatmap(self) -> list[list[float]] | None:
         """Downsample the thermal grid to DASHBOARD_GRID_SIZE for websocket transfer."""

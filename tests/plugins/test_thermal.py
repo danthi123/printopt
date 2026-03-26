@@ -331,7 +331,7 @@ class TestMaterialAwareThresholds:
     def test_petg_threshold(self):
         petg = ThermalConfig(glass_transition=78)
         grid_petg = ThermalGrid(petg)
-        assert grid_petg.gradient_threshold == pytest.approx(78 * 0.25, abs=1)
+        assert grid_petg.gradient_threshold == pytest.approx(78 * 0.5, abs=1)
 
     def test_abs_higher_than_petg(self):
         petg = ThermalConfig(glass_transition=78)
@@ -344,7 +344,7 @@ class TestMaterialAwareThresholds:
     def test_pla_threshold(self):
         pla = ThermalConfig(glass_transition=60)
         grid_pla = ThermalGrid(pla)
-        assert grid_pla.gradient_threshold == pytest.approx(60 * 0.25, abs=1)
+        assert grid_pla.gradient_threshold == pytest.approx(60 * 0.5, abs=1)
 
     def test_minimum_threshold(self):
         # Very low Tg should still get at least 10 C/mm

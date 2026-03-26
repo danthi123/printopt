@@ -70,7 +70,7 @@ class ThermalGrid:
         if c.gradient_warning_threshold <= 0:
             # Higher Tg materials can tolerate more gradient
             # PETG (Tg=78): ~20 C/mm, ABS (Tg=105): ~30 C/mm, PLA (Tg=60): ~15 C/mm
-            self.gradient_threshold = max(10.0, c.glass_transition * 0.25)
+            self.gradient_threshold = max(10.0, c.glass_transition * 0.5)
         else:
             self.gradient_threshold = c.gradient_warning_threshold
 
@@ -139,7 +139,7 @@ class ThermalGrid:
                 # Calibration: only a fraction of deposited heat remains in the surface cell.
                 # Most heat conducts into the part body below. Factor tuned so that
                 # recently printed areas reach ~30-60C above ambient, matching IR measurements.
-                surface_retention = 0.05
+                surface_retention = 0.01
                 self.grid[iy, ix] += surface_retention * q / (cell_mass * c.specific_heat)
 
     def step(self, dt: float) -> None:
