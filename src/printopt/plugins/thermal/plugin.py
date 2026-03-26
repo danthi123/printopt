@@ -145,32 +145,10 @@ class ThermalPlugin(Plugin):
                 py = self._last_y + dy * frac
                 self.grid.deposit_heat(px, py, flow_rate, dt / steps)
 
-        # Record toolpath segment for dashboard visualization
-        if dist > 0.1 and self._nozzle_temp > 100 and self._print_active:
-            temp = 35.0  # default
-            if self.grid:
-                ix = int(new_x / self.grid.config.resolution)
-                iy = int(new_y / self.grid.config.resolution)
-                if 0 <= ix < self.grid.nx and 0 <= iy < self.grid.ny:
-                    if self.grid.xp is np:
-                        temp = float(self.grid.grid[iy, ix])
-                    else:
-                        temp = float(self.grid.xp.asnumpy(self.grid.grid[iy, ix]))
-
-            self._toolpath_segments.append({
-                "x1": round(self._last_x, 1),
-                "y1": round(self._last_y, 1),
-                "x2": round(new_x, 1),
-                "y2": round(new_y, 1),
-                "temp": round(temp, 1),
-                "layer": self.current_layer,
-                "age": 0,  # seconds since deposit, updated each cycle
-                "created": time.monotonic(),
-            })
-
-            # Keep only recent segments for the dashboard
-            if len(self._toolpath_segments) > self._max_dashboard_segments:
-                self._toolpath_segments = self._toolpath_segments[-self._max_dashboard_segments:]
+        # Build toolpath from parsed gcode (much more complete than polled positions)
+        # Re-render on each layer change or periodically
+        if self._print_active and self.parse_result and self.current_layer > 0:
+            self._rebuild_toolpath_from_gcode()
 
         self._last_e = new_e
 
@@ -295,6 +273,78 @@ class ThermalPlugin(Plugin):
     async def on_stop(self) -> None:
         self.grid = None
         self.parse_result = None
+
+    def _rebuild_toolpath_from_gcode(self) -> None:
+        """Build toolpath segments from parsed gcode for the current layer.
+
+        Uses the full gcode data (not polled positions) for complete coverage.
+        Colors segments based on grid temperature at each position.
+        """
+        if not self.parse_result or not self.grid:
+            return
+
+        # Only rebuild when layer changes
+        if hasattr(self, '_last_rendered_layer') and self._last_rendered_layer == self.current_layer:
+            return
+        self._last_rendered_layer = self.current_layer
+
+        # Find moves for the last 3 layers
+        from printopt.core.gcode import FeatureType
+        layer_changes = [f for f in self.parse_result.features if f.type == FeatureType.LAYER_CHANGE]
+
+        # Find line range for recent layers
+        target_start_layer = max(1, self.current_layer - 2)
+        start_line = 0
+        end_line = self.parse_result.moves[-1].line_number if self.parse_result.moves else 0
+
+        for lc in layer_changes:
+            layer_num = lc.metadata.get("layer", 0)
+            if layer_num == target_start_layer:
+                start_line = lc.line_number
+            if layer_num == self.current_layer + 1:
+                end_line = lc.line_number
+                break
+
+        # Build segments from moves in this range
+        now = time.monotonic()
+        segments = []
+        prev_move = None
+        resolution = self.grid.config.resolution
+
+        # Get numpy grid for temperature lookups
+        if self.grid.xp is not np:
+            grid_np = self.grid.xp.asnumpy(self.grid.grid)
+        else:
+            grid_np = self.grid.grid
+
+        for move in self.parse_result.moves:
+            if move.line_number < start_line:
+                continue
+            if move.line_number > end_line:
+                break
+            if move.is_extrusion and prev_move and move.distance > 0.5:
+                # Get temperature at endpoint
+                ix = int(move.x / resolution)
+                iy = int(move.y / resolution)
+                temp = 35.0
+                if 0 <= ix < self.grid.nx and 0 <= iy < self.grid.ny:
+                    temp = float(grid_np[iy, ix])
+
+                segments.append({
+                    "x1": round(prev_move.x, 1),
+                    "y1": round(prev_move.y, 1),
+                    "x2": round(move.x, 1),
+                    "y2": round(move.y, 1),
+                    "temp": round(temp, 1),
+                    "layer": self.current_layer,
+                    "age": 0,
+                    "created": now,
+                })
+            prev_move = move
+
+        # Cap segments and update
+        if segments:
+            self._toolpath_segments = segments[-self._max_dashboard_segments:]
 
     def _downsample_heatmap(self) -> list[list[float]] | None:
         """Downsample the thermal grid to DASHBOARD_GRID_SIZE for websocket transfer."""
