@@ -136,7 +136,11 @@ class ThermalGrid:
             cell_volume_cm3 = (c.resolution * c.resolution * 0.2) / 1000.0
             cell_mass = cell_volume_cm3 * c.density
             if cell_mass > 0:
-                self.grid[iy, ix] += q / (cell_mass * c.specific_heat)
+                # Calibration: only a fraction of deposited heat remains in the surface cell.
+                # Most heat conducts into the part body below. Factor tuned so that
+                # recently printed areas reach ~30-60C above ambient, matching IR measurements.
+                surface_retention = 0.02
+                self.grid[iy, ix] += surface_retention * q / (cell_mass * c.specific_heat)
 
     def step(self, dt: float) -> None:
         """Advance the simulation by dt seconds.
@@ -181,8 +185,9 @@ class ThermalGrid:
         bed_rate = 0.01  # slow equilibration
         self.grid += bed_rate * (c.bed_temp - self.grid) * dt
 
-        # Clamp to physical range
-        xp.clip(self.grid, c.ambient_temp - 5, self.nozzle_temp, out=self.grid)
+        # Clamp to physical range — surface temp shouldn't exceed ~150C even on fresh extrusion
+        max_surface_temp = min(self.nozzle_temp, c.ambient_temp + 120)
+        xp.clip(self.grid, c.ambient_temp - 5, max_surface_temp, out=self.grid)
 
     def get_hotspots(self, threshold: float | None = None) -> list[tuple[int, int, float]]:
         """Find cells above the glass transition temperature.

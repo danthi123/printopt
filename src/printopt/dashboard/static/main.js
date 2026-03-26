@@ -470,7 +470,12 @@ function drawToolpath(segments, bedX, bedY, nozzlePos) {
         var ex = margin.left + seg.x2 * scaleX;
         var ey = margin.top + plotH - seg.y2 * scaleY;
 
-        ctx.strokeStyle = tempToColor(seg.temp);
+        // Fade temperature toward ambient based on age
+        // Half-life of ~10 seconds — recently printed is hot, old paths are cool
+        var age = seg.age || 0;
+        var decayFactor = Math.exp(-age / 15);  // exponential decay, ~15s half-life
+        var effectiveTemp = 25 + (seg.temp - 25) * decayFactor;
+        ctx.strokeStyle = tempToColor(effectiveTemp);
         ctx.beginPath();
         ctx.moveTo(sx, sy);
         ctx.lineTo(ex, ey);

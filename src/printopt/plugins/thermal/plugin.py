@@ -164,6 +164,8 @@ class ThermalPlugin(Plugin):
                 "y2": round(new_y, 1),
                 "temp": round(temp, 1),
                 "layer": self.current_layer,
+                "age": 0,  # seconds since deposit, updated each cycle
+                "created": time.monotonic(),
             })
 
             # Keep only recent segments for the dashboard
@@ -344,6 +346,10 @@ class ThermalPlugin(Plugin):
             data["max_temp"] = round(max_val, 1)
             data["max_gradient"] = round(self.grid.get_max_gradient(), 2)
             data["hotspot_count"] = len(self.grid.get_hotspots())
+            # Update segment ages before sending
+            now = time.monotonic()
+            for seg in self._toolpath_segments:
+                seg["age"] = round(now - seg.get("created", now), 1)
             # Send toolpath segments instead of downsampled grid
             data["toolpath"] = self._toolpath_segments[-1000:]
             # Send bed dimensions for scaling
